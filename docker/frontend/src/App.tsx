@@ -32,6 +32,12 @@ export default function App() {
       } catch {
         setAuthed(false);
       }
+      try {
+        const a = await api.authorizeRaw();
+        if (a && a.authorize_url) setAuthUrl(a.authorize_url);
+      } catch {
+        /* ignore */
+      }
     };
     init();
   }, []);

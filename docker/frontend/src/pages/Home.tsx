@@ -73,7 +73,10 @@ export default function Home({ onOpenTracks, authUrl, onAuthed }: Props) {
             1. Create a Spotify app and add the Redirect URI: /api/oauth/redirect
           </Typography>
           <Button variant="contained" color="primary"
-            onClick={() => api.authorizeRaw().then((r: any) => onAuthed(true))} sx={{ mt: 1 }}>
+            onClick={() => api.authorizeRaw().then((r: any) => {
+              onAuthed(true);
+              if (r && r.authorize_url) window.open(r.authorize_url, '_blank');
+            })} sx={{ mt: 1 }}>
             Connect to Spotify
           </Button>
         </Box>
