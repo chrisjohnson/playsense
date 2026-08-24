@@ -2,12 +2,30 @@
 # Spotify Tracker - docker-compose
 #
 #   docker compose up --build
-#   then open http://localhost:8000
+#   then open https://local-ai-machine.local (self-signed cert; trust it once)
+#
+# Traffic chain:
+#   browser -> caddy (TLS :443) -> frontend (nginx :80) -> api (:8000)
 #
 # The frontend service is an nginx reverse proxy that serves the built SPA
-# and proxies /api/* to the api service.
+# and proxies /api/* to the api service. Caddy terminates TLS so Spotify
+# OAuth can use an https:// redirect URI.
 # ============================================================================
 services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/etc/caddy:ro
+    ports:
+      - "443:443"
+      - "80:80"
+    depends_on:
+      - frontend
+    networks:
+      - sp-tracker-net
+
   api:
     build:
       context: .
@@ -17,15 +35,18 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./data:/data
-    environment:
-      DATABASE_URL: sqlite:////data/spotify_tracker.db
-      INFERENCE_BASE_URL: http://host.docker.internal:11434/v1
+    networks:
+      - sp-tracker-net
     extra_hosts:
       - host.docker.internal:host-gateway
+    volumes:
+      - ./data:/data
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: sqlite:////data/spotify_tracker.db
+      WORKER_CONCURRENCY: "4"
+    command: "uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   frontend:
     build:
@@ -34,9 +55,14 @@ services:
       target: frontend
     image: spotify-tracker:frontend
     restart: unless-stopped
-    ports:
-      - "3000:80"
-    depends_on:
-      - api
+    networks:
+      - sp-tracker-net
     extra_hosts:
       - host.docker.internal:host-gateway
+    ports:
+      - "3001:80"
+    depends_on:
+      - api
+
+networks:
+  sp-tracker-net:

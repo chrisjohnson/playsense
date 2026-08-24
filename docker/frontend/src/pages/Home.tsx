@@ -81,7 +81,7 @@ export default function Home({ onOpenTracks, authUrl, onAuthed, configured }: Pr
             2. Set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in the backend .env (docker-compose.yml or -e flags for the api container).
           </Typography>
           <Typography color="text.secondary">
-            3. Add the Redirect URI http://localhost:8000/api/oauth/redirect (or http://localhost:3000/api/oauth/redirect).
+            3. Add the Redirect URI https://local-ai-machine.local/api/oauth/redirect.
           </Typography>
           <Typography color="text.secondary">
             4. Restart the api container.

@@ -8,8 +8,8 @@ class Settings(BaseSettings):
     # ---- Spotify OAuth ----
     spotify_client_id: str = ""
     spotify_client_secret: str = ""
-    app_public_url: str = "http://localhost:8000"
-    spotify_redirect_uri: str = "http://localhost:8000/api/oauth/redirect"
+    app_public_url: str = "https://local-ai-machine.local"
+    spotify_redirect_uri: str = "https://local-ai-machine.local/api/oauth/redirect"
     spotify_scopes: str = "user-read-private,user-read-email,playlist-read-private,playlist-read-collaborative,playlist-modify-public,playlist-modify-private"
 
     # ---- Database ----
