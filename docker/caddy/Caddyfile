@@ -1,4 +1,8 @@
-local-ai-machine.local {
-  tls /etc/caddy/tracker.crt /etc/caddy/tracker.key
-  reverse_proxy frontend:80
+{
+	auto_https off
+}
+
+local-ai-machine.local:6111 {
+	tls /etc/certs/tracker.crt /etc/certs/tracker.key
+	reverse_proxy frontend:80
 }
