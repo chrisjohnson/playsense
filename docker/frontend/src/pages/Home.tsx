@@ -12,9 +12,10 @@ interface Props {
   onOpenTracks: (id: number) => void;
   authUrl: string;
   onAuthed: (v: boolean) => void;
+  configured: boolean;
 }
 
-export default function Home({ onOpenTracks, authUrl, onAuthed }: Props) {
+export default function Home({ onOpenTracks, authUrl, onAuthed, configured }: Props) {
   const [pls, setPls] = useState<PlaylistItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<number | null>(null);
@@ -66,7 +67,27 @@ export default function Home({ onOpenTracks, authUrl, onAuthed }: Props) {
 
   return (
     <Box>
-      {!authUrl ? (
+      {!configured ? (
+        <Box sx={{ mb: 3 }}>
+          <Typography variant="h5" gutterBottom>Spotify is not set up yet</Typography>
+          <Typography color="text.secondary">Spotify OAuth requires server-side credentials.</Typography>
+          <Typography color="text.secondary" sx={{ mt: 1 }}>
+            Setup steps:
+          </Typography>
+          <Typography color="text.secondary">
+            1. Create a Spotify app at developer.spotify.com.
+          </Typography>
+          <Typography color="text.secondary">
+            2. Set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in the backend .env (docker-compose.yml or -e flags for the api container).
+          </Typography>
+          <Typography color="text.secondary">
+            3. Add the Redirect URI http://localhost:8000/api/oauth/redirect (or http://localhost:3000/api/oauth/redirect).
+          </Typography>
+          <Typography color="text.secondary">
+            4. Restart the api container.
+          </Typography>
+        </Box>
+      ) : (
         <Box sx={{ mb: 3 }}>
           <Typography variant="h5" gutterBottom>Get started</Typography>
           <Typography color="text.secondary">
@@ -80,7 +101,7 @@ export default function Home({ onOpenTracks, authUrl, onAuthed }: Props) {
             Connect to Spotify
           </Button>
         </Box>
-      ) : null}
+      )}
       {loading ? <LinearProgress /> : null}
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
         <Typography variant="h5" gutterBottom sx={{ flexGrow: 1 }}>Your playlists</Typography>

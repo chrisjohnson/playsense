@@ -22,6 +22,7 @@ export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [display, setDisplay] = useState('');
   const [authUrl, setAuthUrl] = useState('');
+  const [configured, setConfigured] = useState<boolean>(false);
 
   useEffect(() => {
     const init = async () => {
@@ -29,8 +30,10 @@ export default function App() {
         const s = await api.authStatus();
         setAuthed(s.authenticated);
         setDisplay(s.display_name);
+        setConfigured(!!s.configured);
       } catch {
         setAuthed(false);
+        setConfigured(false);
       }
       try {
         const a = await api.authorizeRaw();
@@ -51,15 +54,17 @@ export default function App() {
           <Typography variant="h6" sx={{ flexGrow: 1, fontWeight: 700 }}>
             Spotify Tracker
           </Typography>
-          {authed === false ? (
+          {configured === false ? (
+            <Chip label="Setup required" color="warning" />
+          ) : authed === false ? (
             <Chip
               label="Not connected"
               color="error"
               onClick={() => window.open(authUrl || '#', '_blank')}
             />
-          ) : authed === true ? (
+          ) : (
             <Chip label={display || 'Connected'} color="success" />
-          ) : null}
+          )}
         </Toolbar>
         <Tabs value={tabs.indexOf(tab)} onChange={(_, v) => setTab(tabs[v])} textColor="inherit">
           {tabs.map((t) => (
@@ -68,7 +73,7 @@ export default function App() {
         </Tabs>
       </AppBar>
       <Container maxWidth="xl" sx={{ flexGrow: 1, py: 3 }}>
-        {tab === 'home' && <Home onOpenTracks={(id) => { setTab('tracks'); }} authUrl={authUrl} onAuthed={setAuthed} />}
+        {tab === 'home' && <Home onOpenTracks={(id) => { setTab('tracks'); }} authUrl={authUrl} onAuthed={setAuthed} configured={configured} />}
         {tab === 'search' && <Search authed={!!authed} />}
         {tab === 'generate' && <Generate authed={!!authed} />}
         {tab === 'runs' && <Runs />}

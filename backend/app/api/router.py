@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from sqlalchemy import func
 from ..db import get_db, SessionLocal
 from ..models import User, Playlist, Track, ClassificationRun
+from ..config import get_settings
 from ..spotify.auth import authorize_redirect_url, authenticate_code
 from ..spotify.download import download_playlist
 from ..spotify.client import SpotifyAPI
@@ -13,6 +14,7 @@ from .schemas import *
 from .search import query_tracks, build_playlist_from_query
 
 api_router = APIRouter()
+settings = get_settings()
 
 
 def current_spotify():
@@ -28,6 +30,14 @@ def current_spotify():
 
 @api_router.get("/oauth/authorize")
 def oauth_authorize(state: str | None = None):
+    if not settings.spotify_configured:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "not_configured",
+                "message": "Spotify credentials are not configured on the server.",
+            },
+        )
     url, st = authorize_redirect_url(state)
     return {"authorize_url": url, "state": st}
 
@@ -47,8 +57,9 @@ def auth_status():
     try:
         u = db.query(User).first()
         if not u:
-            return {"authenticated": False}
-        return {"authenticated": True, "display_name": u.display_name, "spotify_id": u.spotify_id}
+            return {"authenticated": False, "configured": settings.spotify_configured}
+        return {"authenticated": True, "display_name": u.display_name,
+                "spotify_id": u.spotify_id, "configured": settings.spotify_configured}
     finally:
         db.close()
 

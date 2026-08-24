@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     def scopes_list(self) -> list[str]:
         return [s.strip() for s in self.spotify_scopes.split(",") if s.strip()]
 
+    @property
+    def spotify_configured(self) -> bool:
+        return bool(self.spotify_client_id.strip() and self.spotify_client_secret.strip())
+
 
 @lru_cache
 def get_settings() -> Settings:
