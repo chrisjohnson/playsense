@@ -1,0 +1,42 @@
+# ============================================================================
+# Spotify Tracker - docker-compose
+#
+#   docker compose up --build
+#   then open http://localhost:8000
+#
+# The frontend service is an nginx reverse proxy that serves the built SPA
+# and proxies /api/* to the api service.
+# ============================================================================
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend
+    image: spotify-tracker:backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+    environment:
+      DATABASE_URL: sqlite:////data/spotify_tracker.db
+      INFERENCE_BASE_URL: http://host.docker.internal:11434/v1
+    extra_hosts:
+      - host.docker.internal:host-gateway
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: frontend
+    image: spotify-tracker:frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+    extra_hosts:
+      - host.docker.internal:host-gateway
