@@ -24,25 +24,27 @@ export default function App() {
   const [authUrl, setAuthUrl] = useState('');
   const [configured, setConfigured] = useState<boolean>(false);
 
+  const refreshAuth = async () => {
+    try {
+      const s = await api.authStatus();
+      setAuthed(s.authenticated);
+      setDisplay(s.display_name);
+      setConfigured(!!s.configured);
+    } catch {
+      setAuthed(false);
+      setConfigured(false);
+    }
+    try {
+      const a = await api.authorizeRaw();
+      if (a && a.authorize_url) setAuthUrl(a.authorize_url);
+    } catch {
+      /* ignore */
+    }
+  };
+
   useEffect(() => {
-    const init = async () => {
-      try {
-        const s = await api.authStatus();
-        setAuthed(s.authenticated);
-        setDisplay(s.display_name);
-        setConfigured(!!s.configured);
-      } catch {
-        setAuthed(false);
-        setConfigured(false);
-      }
-      try {
-        const a = await api.authorizeRaw();
-        if (a && a.authorize_url) setAuthUrl(a.authorize_url);
-      } catch {
-        /* ignore */
-      }
-    };
-    init();
+    refreshAuth();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const tabs: TabName[] = ['home', 'search', 'generate', 'runs', 'tracks'];
@@ -73,7 +75,7 @@ export default function App() {
         </Tabs>
       </AppBar>
       <Container maxWidth="xl" sx={{ flexGrow: 1, py: 3 }}>
-        {tab === 'home' && <Home onOpenTracks={(id) => { setTab('tracks'); }} authUrl={authUrl} onAuthed={setAuthed} configured={configured} />}
+        {tab === 'home' && <Home onOpenTracks={(id) => { setTab('tracks'); }} authUrl={authUrl} onAuthed={setAuthed} configured={configured} onRefresh={refreshAuth} />}
         {tab === 'search' && <Search authed={!!authed} />}
         {tab === 'generate' && <Generate authed={!!authed} />}
         {tab === 'runs' && <Runs />}

@@ -5,6 +5,7 @@ import CardContent from '@mui/material/CardContent';
 import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
 import Box from '@mui/material/Box';
+import TextField from '@mui/material/TextField';
 import LinearProgress from '@mui/material/LinearProgress';
 import { api, PlaylistItem } from '../api';
 
@@ -13,12 +14,20 @@ interface Props {
   authUrl: string;
   onAuthed: (v: boolean) => void;
   configured: boolean;
+  onRefresh: () => void;
 }
 
-export default function Home({ onOpenTracks, authUrl, onAuthed, configured }: Props) {
+const REDIRECT_URI = 'https://local-ai-machine.local:6111/api/oauth/redirect';
+const SPOTIFY_CREATE_URL = 'https://developer.spotify.com/dashboard/create';
+
+export default function Home({ onOpenTracks, authUrl, onAuthed, configured, onRefresh }: Props) {
   const [pls, setPls] = useState<PlaylistItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<number | null>(null);
+  const [cid, setCid] = useState('');
+  const [csecret, setCsecret] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState('');
 
   const load = async () => {
     setLoading(true);
@@ -33,11 +42,31 @@ export default function Home({ onOpenTracks, authUrl, onAuthed, configured }: Pr
   };
 
   useEffect(() => {
-    if (!authUrl) {
-      api.authorizeRaw().then((r: any) => ({})).catch(() => {});
-    }
     load();
   }, []);
+
+  const doSaveCreds = async () => {
+    setSaving(true);
+    setSaveMsg('');
+    try {
+      await api.saveCredentials(cid.trim(), csecret.trim());
+      setSaveMsg('Saved — you can now connect to Spotify.');
+      await onRefresh();
+    } catch (e: any) {
+      setSaveMsg('Save failed: ' + (e.message || e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const copyRedirect = async () => {
+    try {
+      await navigator.clipboard.writeText(REDIRECT_URI);
+      setSaveMsg('Redirect URI copied to clipboard.');
+    } catch {
+      setSaveMsg('Copy failed — select the text manually.');
+    }
+  };
 
   const doDownload = async (id: number) => {
     setBusy(id);
@@ -70,28 +99,37 @@ export default function Home({ onOpenTracks, authUrl, onAuthed, configured }: Pr
       {!configured ? (
         <Box sx={{ mb: 3 }}>
           <Typography variant="h5" gutterBottom>Spotify is not set up yet</Typography>
-          <Typography color="text.secondary">Spotify OAuth requires server-side credentials.</Typography>
+          <Typography color="text.secondary">Spotify OAuth needs your app's Client ID and Secret.</Typography>
+          <Typography color="text.secondary" sx={{ mt: 1 }}>Setup steps:</Typography>
+          <Typography color="text.secondary">
+            1. Create a Spotify app: <a href={SPOTIFY_CREATE_URL} target="_blank" rel="noreferrer">developer.spotify.com/dashboard/create</a>
+          </Typography>
+          <Typography color="text.secondary" sx={{ mt: 1 }}>2. On your app's page, under &ldquo;Redirect URIs&rdquo;, add exactly:</Typography>
+          <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+            <Box component="code" sx={{ bgcolor: 'action.hover', px: 1, py: 0.5, borderRadius: 1, userSelect: 'all' }}>
+              {REDIRECT_URI}
+            </Box>
+            <Button size="small" variant="outlined" onClick={copyRedirect}>Copy</Button>
+          </Box>
           <Typography color="text.secondary" sx={{ mt: 1 }}>
-            Setup steps:
+            3. Copy your Client ID and Client Secret, paste them below, and Save &mdash; the server stores them for you (no .env editing needed).
           </Typography>
-          <Typography color="text.secondary">
-            1. Create a Spotify app at developer.spotify.com.
-          </Typography>
-          <Typography color="text.secondary">
-            2. Set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in the backend .env (docker-compose.yml or -e flags for the api container).
-          </Typography>
-          <Typography color="text.secondary">
-            3. Add the Redirect URI https://local-ai-machine.local/api/oauth/redirect.
-          </Typography>
-          <Typography color="text.secondary">
-            4. Restart the api container.
-          </Typography>
+          <Box sx={{ mt: 2, display: 'flex', flexDirection: 'column', gap: 1.5, maxWidth: 480 }}>
+            <TextField label="Client ID" value={cid} onChange={(e) => setCid(e.target.value)} size="small" variant="outlined" fullWidth />
+            <TextField label="Client Secret" type="password" value={csecret} onChange={(e) => setCsecret(e.target.value)} size="small" variant="outlined" fullWidth />
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Button variant="contained" color="primary" disabled={saving || !cid.trim() || !csecret.trim()} onClick={doSaveCreds}>
+                {saving ? 'Saving…' : 'Save credentials'}
+              </Button>
+              {saveMsg && <Typography variant="body2" color="text.secondary">{saveMsg}</Typography>}
+            </Box>
+          </Box>
         </Box>
       ) : (
         <Box sx={{ mb: 3 }}>
           <Typography variant="h5" gutterBottom>Get started</Typography>
           <Typography color="text.secondary">
-            1. Create a Spotify app and add the Redirect URI: /api/oauth/redirect
+            Redirect URI (must match your Spotify app): {REDIRECT_URI}
           </Typography>
           <Button variant="contained" color="primary"
             onClick={() => api.authorizeRaw().then((r: any) => {

@@ -43,10 +43,11 @@ internally (not exposed to the host directly).
 
 ### Default environment values
 
-- SPOTIFY_CLIENT_ID       — empty by default (set it)
-- SPOTIFY_CLIENT_SECRET   — empty by default (set it)
-- APP_PUBLIC_URL          — http://localhost:8000
-- SPOTIFY_REDIRECT_URI    — http://localhost:8000/api/oauth/redirect (match Spotify dashboard)
+- SPOTIFY_CLIENT_ID/SECRET — set via the web UI (Home tab); stored in
+  ~/.spotify-tracker/credentials.json (bind-mounted at /spotify-tracker).
+  Env vars are only an optional fallback now.
+- APP_PUBLIC_URL          — https://local-ai-machine.local:6111
+- SPOTIFY_REDIRECT_URI    — https://local-ai-machine.local:6111/api/oauth/redirect (match Spotify dashboard)
 - SPOTIFY_SCOPES          — user-read-private,user-read-email,playlist-read-private,playlist-read-collaborative,playlist-modify-public,playlist-modify-private
 - DATABASE_URL            — sqlite:////data/spotify_tracker.db
 - INFERENCE_BASE_URL      — http://host.docker.internal:11434/v1
@@ -58,14 +59,17 @@ internally (not exposed to the host directly).
 
 ## First-time setup
 
-1. Create a Spotify app at https://developer.spotify.com/dashboard. Copy the
-   Client ID and Client Secret into .env.
-2. Set the app's Redirect URI to http://localhost:8000/api/oauth/redirect
-   (matching SPOTIFY_REDIRECT_URI).
-3. Start the stack: docker compose up --build
-4. In the app, click Home -> Connect to Spotify. You'll be redirected to
-   Spotify, asked to authorize, and sent back to /api/oauth/redirect.
-5. The status chip turns green (Connected) once authenticated.
+1. Create a Spotify app: https://developer.spotify.com/dashboard/create
+2. On your app's page, under "Redirect URIs", add exactly:
+   https://local-ai-machine.local:6111/api/oauth/redirect
+3. Start the stack: docker compose up --build, then open
+   https://local-ai-machine.local:6111 in your browser (accept the self-signed cert).
+4. On the Home tab, paste your Client ID and Client Secret and click
+   "Save credentials" — the server stores them in ~/.spotify-tracker
+   (bind-mounted), so no .env editing is needed.
+5. Click "Connect to Spotify". You'll be redirected to Spotify, asked to
+   authorize, and sent back to /api/oauth/redirect. The status chip turns
+   green (Connected) once authenticated.
 
 Push-back (generating playlists on your account) requests the
 playlist-modify-public, playlist-modify-private scopes. Grant them at auth time
@@ -146,6 +150,8 @@ npm run build        # production bundle -> dist/
 
 - GET    /api/health                     — Liveness check
 - GET    /api/auth/status                — Whether a user is authenticated
+- GET    /api/spotify/credentials        — Whether Spotify creds are set
+- POST   /api/spotify/credentials        — Save Spotify client credentials
 - GET    /api/oauth/authorize            — Returns an OAuth authorize URL + state
 - GET    /api/oauth/redirect             — Callback: exchanges the code, fetches /me
 - GET    /api/playlists                  — List playlists (with track counts)

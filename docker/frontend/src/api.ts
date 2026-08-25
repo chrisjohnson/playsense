@@ -26,6 +26,9 @@ export const api = {
   search: (q: any) => req('/search', { method: 'POST', body: JSON.stringify(q) }),
   generate: (body: any) => req('/generate', { method: 'POST', body: JSON.stringify(body) }),
   runs: () => req('/runs'),
+  saveCredentials: (client_id: string, client_secret: string) =>
+    req('/spotify/credentials', { method: 'POST', body: JSON.stringify({ client_id, client_secret }) }),
+  getCredentials: () => req('/spotify/credentials'),
 };
 
 export type Track = {
