@@ -32,6 +32,11 @@ class Settings(BaseSettings):
 
     @property
     def spotify_configured(self) -> bool:
+        # The credential file (bind-mounted) is the source of truth; env values
+        # are only a fallback for backwards compatibility.
+        from .spotify.credentials import configured as _file_configured
+        if _file_configured():
+            return True
         return bool(self.spotify_client_id.strip() and self.spotify_client_secret.strip())
 
 

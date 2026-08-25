@@ -8,6 +8,8 @@ from ..config import get_settings
 from ..spotify.auth import authorize_redirect_url, authenticate_code
 from ..spotify.download import download_playlist
 from ..spotify.client import SpotifyAPI
+from ..spotify import credentials
+from pydantic import BaseModel
 from ..inference.runner import run_classification
 from ..inference.adapter import JSON_SCHEMA as LLM_SCHEMA
 from .schemas import *
@@ -30,7 +32,7 @@ def current_spotify():
 
 @api_router.get("/oauth/authorize")
 def oauth_authorize(state: str | None = None):
-    if not settings.spotify_configured:
+    if not credentials.configured():
         raise HTTPException(
             status_code=503,
             detail={
@@ -57,11 +59,30 @@ def auth_status():
     try:
         u = db.query(User).first()
         if not u:
-            return {"authenticated": False, "configured": settings.spotify_configured}
+            return {"authenticated": False, "configured": credentials.configured()}
         return {"authenticated": True, "display_name": u.display_name,
-                "spotify_id": u.spotify_id, "configured": settings.spotify_configured}
+                "spotify_id": u.spotify_id, "configured": credentials.configured()}
     finally:
         db.close()
+
+
+class SpotifyCredentialsIn(BaseModel):
+    client_id: str
+    client_secret: str
+
+
+@api_router.post("/spotify/credentials")
+def set_spotify_credentials(body: SpotifyCredentialsIn):
+    """Persist the Spotify client credentials to the bind-mounted credentials file."""
+    path = credentials.save_credentials(body.client_id.strip(), body.client_secret.strip())
+    return {"status": "ok", "path": path, "configured": credentials.configured()}
+
+
+@api_router.get("/spotify/credentials")
+def get_spotify_credentials():
+    """Report whether credentials are set (never returns the secret)."""
+    c = credentials.load_credentials()
+    return {"configured": credentials.configured(), "client_id": c["client_id"]}
 
 
 @api_router.get("/playlists")

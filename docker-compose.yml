@@ -1,26 +1,32 @@
 # ============================================================================
-# Spotify Tracker - docker-compose
+# Spotify Tracker - docker-compose (reference)
 #
 #   docker compose up --build
-#   then open https://local-ai-machine.local (self-signed cert; trust it once)
+#   then open https://local-ai-machine.local:6111 (self-signed cert; trust once)
+#
+# NOTE: this deployment is actually run with standalone docker commands (no
+# compose in this environment). This file documents the equivalent topology.
 #
 # Traffic chain:
-#   browser -> caddy (TLS :443) -> frontend (nginx :80) -> api (:8000)
+#   browser -> caddy (HTTPS :6111) -> frontend (nginx :80) -> api (:8000)
 #
-# The frontend service is an nginx reverse proxy that serves the built SPA
-# and proxies /api/* to the api service. Caddy terminates TLS so Spotify
-# OAuth can use an https:// redirect URI.
+# Only caddy is exposed to the host (port 6111). The frontend and api are
+# reached by container name on the shared network - no other host ports.
+#
+# Spotify credentials are NOT in env vars. They are stored in a file under the
+# bind-mounted host dir ~/.spotify-tracker (mounted at /spotify-tracker) and set
+# through the web UI (POST /api/spotify/credentials).
 # ============================================================================
 services:
   caddy:
     image: caddy:2
     restart: unless-stopped
+    command: caddy run --config /etc/caddy.d/Caddyfile
     volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./certs:/etc/caddy:ro
+      - ./docker/caddy:/etc/caddy.d:ro
+      - ./certs:/etc/certs:ro
     ports:
-      - "443:443"
-      - "80:80"
+      - "6111:6111"
     depends_on:
       - frontend
     networks:
@@ -33,16 +39,13 @@ services:
       target: backend
     image: spotify-tracker:backend
     restart: unless-stopped
-    env_file:
-      - .env
     networks:
       - sp-tracker-net
     extra_hosts:
       - host.docker.internal:host-gateway
     volumes:
       - ./data:/data
-    ports:
-      - "8000:8000"
+      - /home/chris/.spotify-tracker:/spotify-tracker
     environment:
       DATABASE_URL: sqlite:////data/spotify_tracker.db
       WORKER_CONCURRENCY: "4"
@@ -59,8 +62,6 @@ services:
       - sp-tracker-net
     extra_hosts:
       - host.docker.internal:host-gateway
-    ports:
-      - "3001:80"
     depends_on:
       - api
 

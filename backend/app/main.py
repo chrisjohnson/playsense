@@ -6,17 +6,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .db import init_db
 from .api import api_router
+from .spotify import credentials
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    settings = get_settings()
-    if not settings.spotify_configured:
+    if not credentials.configured():
         logger.warning(
-            "Spotify credentials not configured (set SPOTIFY_CLIENT_ID/SECRET); "
-            "OAuth unavailable."
+            "Spotify credentials not configured (no credentials file at %s); "
+            "OAuth unavailable until set via POST /api/spotify/credentials.",
+            credentials.creds_path(),
         )
     init_db()
     yield

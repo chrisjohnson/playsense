@@ -3,6 +3,7 @@ from urllib.parse import urlencode
 from datetime import datetime, timedelta, timezone
 import httpx
 from ..config import get_settings
+from . import credentials
 
 
 TOKEN_URL = "https://accounts.spotify.com/api/token"
@@ -15,7 +16,7 @@ def authorize_redirect_url(state: str | None = None) -> tuple[str, str]:
         state = secrets.token_urlsafe(16)
     params = {
         "response_type": "code",
-        "client_id": settings.spotify_client_id,
+        "client_id": credentials.load_credentials()["client_id"],
         "scope": " ".join(settings.scopes_list),
         "redirect_uri": settings.spotify_redirect_uri,
         "state": state,
@@ -24,11 +25,11 @@ def authorize_redirect_url(state: str | None = None) -> tuple[str, str]:
 
 
 def _token_payload(extra: dict) -> dict:
-    settings = get_settings()
+    creds = credentials.load_credentials()
     return {
         "grant_type": extra["grant_type"],
-        "client_id": settings.spotify_client_id,
-        "client_secret": settings.spotify_client_secret,
+        "client_id": creds["client_id"],
+        "client_secret": creds["client_secret"],
         **extra,
     }
 
