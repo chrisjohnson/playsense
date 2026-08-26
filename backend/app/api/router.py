@@ -1,6 +1,8 @@
 from __future__ import annotations
 import json
+from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
+from fastapi.responses import RedirectResponse
 from sqlalchemy import func
 from ..db import get_db, SessionLocal
 from ..models import User, Playlist, Track, ClassificationRun
@@ -46,11 +48,14 @@ def oauth_authorize(state: str | None = None):
 
 @api_router.get("/oauth/redirect")
 def oauth_redirect(code: str, state: str | None = None):
+    base = settings.app_public_url.rstrip("/")
     try:
         authenticate_code(code)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return {"status": "ok", "message": "authenticated"}
+        # On failure, send the user back to the app with the error shown in the UI
+        return RedirectResponse(url=base + "/?spotify_error=" + quote(str(e)), status_code=302)
+    # Success: send the user back to the app (the SPA reloads and shows the connected state)
+    return RedirectResponse(url=base + "/?spotify=connected", status_code=302)
 
 
 @api_router.get("/auth/status")

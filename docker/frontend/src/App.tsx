@@ -23,6 +23,7 @@ export default function App() {
   const [display, setDisplay] = useState('');
   const [authUrl, setAuthUrl] = useState('');
   const [configured, setConfigured] = useState<boolean>(false);
+  const [oauthMsg, setOauthMsg] = useState<string>('');
 
   const refreshAuth = async () => {
     try {
@@ -43,7 +44,30 @@ export default function App() {
   };
 
   useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const err = p.get('spotify_error');
+    if (err) setOauthMsg('Spotify connection failed: ' + err);
+    else if (p.get('spotify') === 'connected') setOauthMsg('Connected to Spotify!');
+    if (window.history && window.history.replaceState) {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
     refreshAuth();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Keep any open tab in sync: refresh when it regains focus/visibility, plus a
+  // light 15s poll, so a tab opened before the OAuth completes updates too.
+  useEffect(() => {
+    const onFocus = () => refreshAuth();
+    const onVis = () => { if (document.visibilityState === 'visible') refreshAuth(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVis);
+    const iv = setInterval(refreshAuth, 15000);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVis);
+      clearInterval(iv);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -75,7 +99,7 @@ export default function App() {
         </Tabs>
       </AppBar>
       <Container maxWidth="xl" sx={{ flexGrow: 1, py: 3 }}>
-        {tab === 'home' && <Home onOpenTracks={(id) => { setTab('tracks'); }} authUrl={authUrl} onAuthed={setAuthed} configured={configured} onRefresh={refreshAuth} />}
+        {tab === 'home' && <Home onOpenTracks={(id) => { setTab('tracks'); }} authUrl={authUrl} onAuthed={setAuthed} configured={configured} onRefresh={refreshAuth} authed={!!authed} display={display} oauthMsg={oauthMsg} />}
         {tab === 'search' && <Search authed={!!authed} />}
         {tab === 'generate' && <Generate authed={!!authed} />}
         {tab === 'runs' && <Runs />}

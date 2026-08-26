@@ -15,12 +15,15 @@ interface Props {
   onAuthed: (v: boolean) => void;
   configured: boolean;
   onRefresh: () => void;
+  authed: boolean;
+  display: string;
+  oauthMsg: string;
 }
 
 const REDIRECT_URI = 'https://local-ai-machine.local:6111/api/oauth/redirect';
 const SPOTIFY_CREATE_URL = 'https://developer.spotify.com/dashboard/create';
 
-export default function Home({ onOpenTracks, authUrl, onAuthed, configured, onRefresh }: Props) {
+export default function Home({ onOpenTracks, authUrl, onAuthed, configured, onRefresh, authed, display, oauthMsg }: Props) {
   const [pls, setPls] = useState<PlaylistItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<number | null>(null);
@@ -125,6 +128,11 @@ export default function Home({ onOpenTracks, authUrl, onAuthed, configured, onRe
             </Box>
           </Box>
         </Box>
+      ) : authed ? (
+        <Box sx={{ mb: 3 }}>
+          <Typography variant="h5" gutterBottom>Connected as {display || 'Spotify'}</Typography>
+          <Typography color="text.secondary">You're connected to Spotify. Download and classify your playlists below.</Typography>
+        </Box>
       ) : (
         <Box sx={{ mb: 3 }}>
           <Typography variant="h5" gutterBottom>Get started</Typography>
@@ -138,6 +146,11 @@ export default function Home({ onOpenTracks, authUrl, onAuthed, configured, onRe
             })} sx={{ mt: 1 }}>
             Connect to Spotify
           </Button>
+        </Box>
+      )}
+      {oauthMsg && (
+        <Box sx={{ mb: 2, p: 1.5, borderRadius: 1, bgcolor: oauthMsg.startsWith('Connected') ? 'success.main' : 'error.main', color: 'white' }}>
+          <Typography variant="body2">{oauthMsg}</Typography>
         </Box>
       )}
       {loading ? <LinearProgress /> : null}
