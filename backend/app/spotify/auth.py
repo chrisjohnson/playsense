@@ -44,6 +44,7 @@ def exchange_code(code: str, redirect_uri: str | None = None) -> dict:
 
 
 def refresh_access_token(refresh_token: str) -> dict:
+    settings = get_settings()
     data = _token_payload({"grant_type": "refresh_token", "refresh_token": refresh_token})
     with httpx.Client(timeout=settings.inference_timeout_seconds) as c:
         r = c.post(TOKEN_URL, data=data)

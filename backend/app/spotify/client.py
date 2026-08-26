@@ -16,9 +16,10 @@ def _raise_or_json(r: httpx.Response):
 class SpotifyAPI:
     BASE = "https://api.spotify.com/v1"
 
-    def __init__(self, access_token: str, refresh: str | None = None, expires_at=None):
+    def __init__(self, access_token: str, refresh: str | None = None, expires_at=None, token_saver=None):
         self.access_token = access_token
         self._refresh = refresh
+        self._token_saver = token_saver
         # Normalize any naive datetime to tz-aware UTC so expiry comparisons
         # never raise "can't compare offset-naive and offset-aware datetimes".
         if expires_at is not None and expires_at.tzinfo is None:
@@ -40,16 +41,37 @@ class SpotifyAPI:
             if tok.get("refresh_token"):
                 self._refresh = tok["refresh_token"]
             self._http.headers = self._headers()
+            # Persist the rotated tokens so the next request (fresh client) does not
+            # try to refresh with an already-invalidated refresh token.
+            if self._token_saver:
+                try:
+                    self._token_saver(self.access_token, self._refresh, self._expires_at)
+                except Exception:
+                    pass
 
     def get(self, path: str, **kwargs):
         self._ensure_valid()
-        return _raise_or_json(self._http.get(path, **kwargs))
+        return self._request(self._http.get, path, **kwargs)
 
     def post(self, path: str, **kwargs):
         self._ensure_valid()
-        return _raise_or_json(self._http.post(path, **kwargs))
+        return self._request(self._http.post, path, **kwargs)
 
     def raw(self, method: str, path: str, **kwargs):
         self._ensure_valid()
-        r = self._http.request(method, path, **kwargs)
-        return _raise_or_json(r)
+        return self._request(getattr(self._http, method), path, **kwargs)
+
+    def _request(self, fn, path, **kwargs):
+        """Execute an API call, retrying with backoff on 429 (quota/rate limit)."""
+        import time
+        last_r = None
+        for attempt in range(6):
+            r = fn(path, **kwargs)
+            last_r = r
+            if r.status_code == 429:
+                ra = r.headers.get("Retry-After")
+                wait = int(ra) if (ra and ra.isdigit()) else 10 + attempt * 10
+                time.sleep(min(wait, 65))
+                continue
+            return _raise_or_json(r)
+        return _raise_or_json(last_r)

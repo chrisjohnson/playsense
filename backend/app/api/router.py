@@ -27,7 +27,20 @@ def current_spotify():
         u = db.query(User).first()
         if not u:
             raise RuntimeError("not authenticated")
-        return SpotifyAPI(u.access_token, refresh=u.refresh_token, expires_at=u.token_expires_at)
+        def saver(access_token, refresh_token, expires_at):
+            # Persist the rotated tokens in a fresh session (the outer one is still open).
+            sdb = SessionLocal()
+            try:
+                uu = sdb.get(User, u.id)
+                if uu is not None:
+                    uu.access_token = access_token
+                    if refresh_token:
+                        uu.refresh_token = refresh_token
+                    uu.token_expires_at = expires_at
+                    sdb.commit()
+            finally:
+                sdb.close()
+        return SpotifyAPI(u.access_token, refresh=u.refresh_token, expires_at=u.token_expires_at, token_saver=saver)
     finally:
         db.close()
 
