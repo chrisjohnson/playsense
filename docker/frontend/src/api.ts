@@ -29,6 +29,7 @@ export const api = {
   saveCredentials: (client_id: string, client_secret: string) =>
     req('/spotify/credentials', { method: 'POST', body: JSON.stringify({ client_id, client_secret }) }),
   getCredentials: () => req('/spotify/credentials'),
+  sync: () => req('/playlists/sync', { method: 'POST' }),
 };
 
 export type Track = {

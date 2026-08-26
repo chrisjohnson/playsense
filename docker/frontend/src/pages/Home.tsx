@@ -31,6 +31,7 @@ export default function Home({ onOpenTracks, authUrl, onAuthed, configured, onRe
   const [csecret, setCsecret] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState('');
+  const [syncing, setSyncing] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -41,6 +42,18 @@ export default function Home({ onOpenTracks, authUrl, onAuthed, configured, onRe
       console.error(e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const doSync = async () => {
+    setSyncing(true);
+    try {
+      await api.sync();
+      await load();
+    } catch (e: any) {
+      alert('Sync failed: ' + (e.message || e));
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -131,7 +144,7 @@ export default function Home({ onOpenTracks, authUrl, onAuthed, configured, onRe
       ) : authed ? (
         <Box sx={{ mb: 3 }}>
           <Typography variant="h5" gutterBottom>Connected as {display || 'Spotify'}</Typography>
-          <Typography color="text.secondary">You're connected to Spotify. Download and classify your playlists below.</Typography>
+          <Typography color="text.secondary">You're connected to Spotify. Click "Sync from Spotify" to load your playlists, then download the ones you want to analyze.</Typography>
         </Box>
       ) : (
         <Box sx={{ mb: 3 }}>
@@ -156,8 +169,17 @@ export default function Home({ onOpenTracks, authUrl, onAuthed, configured, onRe
       {loading ? <LinearProgress /> : null}
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
         <Typography variant="h5" gutterBottom sx={{ flexGrow: 1 }}>Your playlists</Typography>
-        <Button onClick={load} variant="outlined">Refresh</Button>
+        <Button onClick={doSync} variant="outlined" disabled={syncing || !authed}>
+          {syncing ? 'Syncing…' : 'Sync from Spotify'}
+        </Button>
       </Box>
+      {authed && pls.length === 0 && !loading && (
+        <Box sx={{ p: 2, mb: 2, borderRadius: 1, bgcolor: 'action.hover' }}>
+          <Typography color="text.secondary">
+            No playlists loaded yet. Click "Sync from Spotify" to pull your playlists from Spotify, then Download the ones you want to analyze.
+          </Typography>
+        </Box>
+      )}
       <Grid container spacing={2}>
         {pls.map((p) => (
           <Grid item xs={12} sm={6} md={4} key={p.spotify_playlist_id}>

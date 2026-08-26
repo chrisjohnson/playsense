@@ -18,7 +18,7 @@ def get_or_create_api():
 
 
 def list_playlists(api: SpotifyAPI, limit: int = 50):
-    return api.get("/playlists", params={"limit": limit})["items"]
+    return api.get("/me/playlists", params={"limit": min(limit, 50)})["items"]
 
 
 def ensure_playlist(api: SpotifyAPI, item: dict):
@@ -26,6 +26,9 @@ def ensure_playlist(api: SpotifyAPI, item: dict):
     try:
         pl = db.query(Playlist).filter_by(spotify_playlist_id=item["id"]).first()
         if pl is None:
+            user = db.query(User).first()
+            if user is None:
+                raise RuntimeError("Not authenticated")
             pl = Playlist(
                 spotify_playlist_id=item["id"],
                 name=item.get("name", ""),
@@ -34,6 +37,7 @@ def ensure_playlist(api: SpotifyAPI, item: dict):
                 owner_id=(item.get("owner") or {}).get("id", ""),
                 external_url=(item.get("external_urls") or {}).get("spotify", ""),
                 is_public=item.get("public", False),
+                user_id=user.id,
             )
             db.add(pl)
             db.commit()
@@ -41,6 +45,26 @@ def ensure_playlist(api: SpotifyAPI, item: dict):
         return pl
     finally:
         db.close()
+
+
+def sync_playlists(api: SpotifyAPI, max_playlists: int = 200) -> list:
+    """Fetch the user's Spotify playlists (paginated, limit<=50) and upsert local rows."""
+    from urllib.parse import urlparse, parse_qs
+    pls = []
+    params = {"limit": 50}
+    url = "/me/playlists"
+    while len(pls) < max_playlists:
+        page = api.get(url, params=params)
+        batch = page.get("items", []) or []
+        if not batch:
+            break
+        for item in batch:
+            pls.append(ensure_playlist(api, item))
+        nxt = page.get("next")
+        if not nxt:
+            break
+        params["offset"] = int(parse_qs(urlparse(nxt).query).get("offset", ["0"])[0])
+    return pls
 
 
 def _batch_audio_features(api: SpotifyAPI, ids):

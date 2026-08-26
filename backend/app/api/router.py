@@ -8,7 +8,7 @@ from ..db import get_db, SessionLocal
 from ..models import User, Playlist, Track, ClassificationRun
 from ..config import get_settings
 from ..spotify.auth import authorize_redirect_url, authenticate_code
-from ..spotify.download import download_playlist
+from ..spotify.download import download_playlist, sync_playlists
 from ..spotify.client import SpotifyAPI
 from ..spotify import credentials
 from pydantic import BaseModel
@@ -103,6 +103,23 @@ def get_playlists(limit: int = Query(50)):
                  "track_count": cnt.get(p.id, 0)} for p in rows]
     finally:
         db.close()
+
+
+@api_router.post("/playlists/sync")
+def sync_playlists_endpoint():
+    try:
+        api = current_spotify()
+    except Exception:
+        raise HTTPException(status_code=401, detail="Not authenticated. Connect to Spotify first.")
+    try:
+        pls = sync_playlists(api)
+        return {"status": "ok", "count": len(pls), "playlists": [
+            {"id": p.id, "spotify_playlist_id": p.spotify_playlist_id, "name": p.name,
+             "description": p.description, "owner_id": p.owner_id, "is_public": p.is_public,
+             "external_url": p.external_url, "fetched_at": p.fetched_at, "track_count": 0}
+            for p in pls]}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @api_router.post("/playlists/{pl_id}/download")
