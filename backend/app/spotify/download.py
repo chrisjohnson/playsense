@@ -87,63 +87,75 @@ def _batch_audio_features(api: SpotifyAPI, ids):
 
 
 def download_playlist(api: SpotifyAPI, playlist_db_id: int) -> int:
-    """Fetch a playlist's tracks + audio features and upsert into the DB."""
+    """Fetch a playlist's tracks and upsert into the DB.
+
+    Commits after every page so progress survives Spotify quota interruptions
+    (429 QUOTA_EXCEEDED). A re-run resumes from the number of tracks already saved
+    for this playlist instead of re-fetching from the start, so a large playlist
+    can grind across daily quota windows.
+    """
     db = SessionLocal()
     try:
         pl = db.get(Playlist, playlist_db_id)
         if pl is None:
             raise RuntimeError(f"Local playlist {playlist_db_id} not found")
-        all_items = []
-        url = f"/playlists/{pl.spotify_playlist_id}/tracks"
-        params = {"limit": 100, "offset": 0}
+        url = f"/playlists/{pl.spotify_playlist_id}/items"
+        # Resume: skip the pages already saved for this playlist.
+        offset = db.query(Track).filter(Track.playlist_id == pl.id).count()
+        total = offset
         while True:
-            page = api.get(url, params=params)
-            for idx, entry in enumerate(page.get("items", []) or []):
+            page = api.get(url, params={"limit": 100, "offset": offset})
+            items = page.get("items", []) or []
+            total = page.get("total", 0)
+            for idx, entry in enumerate(items):
                 t = entry.get("track")
                 if not t or t.get("id") is None:
                     continue
-                t = dict(t)
-                t["_index"] = idx
-                all_items.append(t)
-            total = page.get("total", 0)
-            if len(all_items) >= total:
+                tid = t["id"]
+                track = db.query(Track).filter_by(spotify_track_id=tid).first()
+                if track is None:
+                    track = Track(spotify_track_id=tid)
+                    db.add(track)
+                artists = [{"id": a["id"], "name": a["name"], "uri": a.get("uri", "")} for a in t.get("artists", [])]
+                album = t.get("album", {}) or {}
+                track.name = t.get("name", "")
+                track.artists = json.dumps(artists)
+                track.album_name = album.get("name", "")
+                track.album_id = album.get("id", "")
+                track.release_date = str(album.get("release_date", "") or "")
+                track.duration_ms = t.get("duration_ms")
+                track.uri = t.get("uri", "")
+                track.external_url = (t.get("external_urls") or {}).get("spotify", "")
+                track.isrc = (t.get("external_ids") or {}).get("isrc", "") or ""
+                track.playlist_id = pl.id
+                track.playlist_track_index = offset + idx
+            offset += len(items)
+            pl.fetched_at = datetime.now(timezone.utc)
+            db.commit()  # per-page commit: progress survives quota interruptions
+            if offset >= total or not items:
                 break
-            params["offset"] = len(all_items)
-        ids = [t["id"] for t in all_items if t.get("id")]
-        feats = _batch_audio_features(api, ids) if ids else {}
-        for t in all_items:
-            tid = t["id"]
-            track = db.query(Track).filter_by(spotify_track_id=tid).first()
-            artists = [{"id": a["id"], "name": a["name"], "uri": a.get("uri", "")} for a in t.get("artists", [])]
-            album = t.get("album", {}) or {}
-            feat = feats.get(tid) or {}
-            if track is None:
-                track = Track(spotify_track_id=tid)
-                pl.tracks.append(track)
-            track.name = t.get("name", "")
-            track.artists = json.dumps(artists)
-            track.album_name = album.get("name", "")
-            track.album_id = album.get("id", "")
-            track.release_date = str(album.get("release_date", "") or "")
-            track.duration_ms = t.get("duration_ms")
-            track.uri = t.get("uri", "")
-            track.external_url = (t.get("external_urls") or {}).get("spotify", "")
-            track.isrc = (t.get("external_ids") or {}).get("isrc", "") or ""
-            track.playlist_track_index = t.get("_index", 0)
-            track.danceability = feat.get("danceability")
-            track.energy = feat.get("energy")
-            track.key = feat.get("key")
-            track.mode = feat.get("mode")
-            track.loudness = feat.get("loudness")
-            track.tempo = feat.get("tempo")
-            track.time_signature = feat.get("time_signature")
-            track.acousticness = feat.get("acousticness")
-            track.instrumentalness = feat.get("instrumentalness")
-            track.liveness = feat.get("liveness")
-            track.speechiness = feat.get("speechiness")
-            track.valence = feat.get("valence")
-        pl.fetched_at = datetime.now(timezone.utc)
-        db.commit()
-        return len(all_items)
+        # Best-effort audio features (403 in dev mode -> {}); metadata is already
+        # saved, so a failure here must not lose the tracks.
+        try:
+            rows = db.query(Track).filter(Track.playlist_id == pl.id).all()
+            feats = _batch_audio_features(api, [r.spotify_track_id for r in rows])
+            for r in rows:
+                feat = feats.get(r.spotify_track_id) or {}
+                r.danceability = feat.get("danceability")
+                r.energy = feat.get("energy")
+                r.key = feat.get("key")
+                r.mode = feat.get("mode")
+                r.loudness = feat.get("loudness")
+                r.tempo = feat.get("tempo")
+                r.time_signature = feat.get("time_signature")
+                r.acousticness = feat.get("acousticness")
+                r.instrumentalness = feat.get("instrumentalness")
+                r.liveness = feat.get("liveness")
+                r.speechiness = feat.get("speechiness")
+                r.valence = feat.get("valence")
+            db.commit()
+        except Exception:
+            db.rollback()
+        return total
     finally:
         db.close()
