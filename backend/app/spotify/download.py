@@ -71,7 +71,15 @@ def _batch_audio_features(api: SpotifyAPI, ids):
     results = {}
     for i in range(0, len(ids), 50):
         chunk = ids[i:i + 50]
-        data = api.get("/audio-features", params={"ids": ",".join(chunk)})
+        try:
+            data = api.get("/audio-features", params={"ids": ",".join(chunk)})
+        except Exception as e:
+            # Audio Features can be unavailable (403) for new/personal apps under
+            # Spotify's extended-quota changes. Degrade to metadata-only rather than
+            # failing the entire download.
+            if "403" in str(e):
+                break
+            continue
         for feat in data.get("audio_features", []) or []:
             if feat and feat.get("id"):
                 results[feat["id"]] = feat
