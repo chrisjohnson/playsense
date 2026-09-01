@@ -9,11 +9,12 @@ from .client import SpotifyAPI
 logger = logging.getLogger(__name__)
 
 # Feb-2026 dev-mode API: playlist items moved to /playlists/{id}/tracks with a
-# page limit capped at 50 (the old /items endpoint is deprecated). We prefer
-# the new endpoint and fall back to the legacy one if it 404s.
+# page limit capped at 50 (the old /items endpoint is deprecated, still accepts
+# limit=100). In practice the NEW endpoint 403s for dev-mode apps, so this is
+# really a fallback chain: try new first (future-proof), fall back to legacy.
 _TRACKS_ENDPOINTS = [
     ("/playlists/{sid}/tracks", 50),
-    ("/playlists/{sid}/items", 50),
+    ("/playlists/{sid}/items", 100),
 ]
 _endpoint_cache: dict[str, tuple] = {}
 
@@ -115,7 +116,9 @@ def _resolve_endpoint(api: SpotifyAPI, sid: str) -> tuple:
             return path_tmpl, limit
         except RuntimeError as e:
             s = str(e)
-            if any(c in s for c in (" 404", " 405", " 410")):
+            # 403/404/405/410 on the probe = endpoint unavailable for this
+            # app/playlist combination in dev mode -> try the next candidate.
+            if any(c in s for c in (" 403", " 404", " 405", " 410")):
                 last_err = e
                 continue
             raise
@@ -190,15 +193,28 @@ def download_playlist(api: SpotifyAPI, playlist_db_id: int) -> dict:
             page = api.get(url, params={"limit": page_limit, "offset": offset})
             items = page.get("items") or []
             total = page.get("total", 0) or total
+            # In-page dedupe: a playlist can contain the same track twice. A row
+            # added this page is not visible to db.query() until flush, so keep
+            # the pending objects here to avoid UNIQUE constraint violations.
+            page_seen: dict = {}
             for idx, entry in enumerate(items):
-                t = entry.get("track")
+                # Feb-2026 dev-mode API renamed the entry's track object from
+                # "track" to "item" (the old key now comes back null). Handle
+                # both shapes.
+                t = entry.get("track") or entry.get("item")
                 if not t or t.get("id") is None:
                     continue
+                if t.get("type") not in (None, "track"):
+                    continue  # episodes etc. - not a track
                 tid = t["id"]
-                track = db.query(Track).filter_by(spotify_track_id=tid).first()
-                if track is None:
-                    track = Track(spotify_track_id=tid)
-                    db.add(track)
+                if tid in page_seen:
+                    track = page_seen[tid]
+                else:
+                    track = db.query(Track).filter_by(spotify_track_id=tid).first()
+                    if track is None:
+                        track = Track(spotify_track_id=tid)
+                        db.add(track)
+                    page_seen[tid] = track
                 artists = [{"id": a["id"], "name": a["name"], "uri": a.get("uri", "")} for a in t.get("artists", [])]
                 album = t.get("album", {}) or {}
                 track.name = t.get("name", "")

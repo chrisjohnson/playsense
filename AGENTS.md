@@ -92,9 +92,14 @@ full. Design around them, do not fight them:
     `/audio-features?ids=`, etc. Fetch individually (the download worker skips
     audio features entirely).
   - Playlist items: `GET /playlists/{id}/tracks` (NEW; page limit max **50**,
-    was 100). Old `/items` is deprecated (kept as fallback in download.py).
-  - Search `limit` max dropped 50 -> 10. `popularity` field removed. `/me` no
-    longer returns email/country. Other users' playlists/profiles: metadata only.
+    was 100) - but it **403s for dev-mode apps**; the legacy `/items` endpoint
+    still works and still accepts **limit=100**. download.py probes new-first,
+    falls back to legacy (treat 403/404/405/410 on the probe as unavailable).
+  - **Response field renames:** playlist entries carry the track object under
+    `items[].item` (the old `items[].track` key comes back **null**). Code must
+    read `entry.get("track") or entry.get("item")`. `popularity` field removed.
+  - Search `limit` max dropped 50 -> 10. `/me` no longer returns email/country.
+    Other users' playlists/profiles: metadata only.
   - Dev mode requires the app owner to have Premium; <=5 authorized users per app.
 - **Downloads are background work**: POST /playlists/{id}/download ENQUEUES; the
   worker grinds page-by-page, commits per page, and progress (download_* columns
