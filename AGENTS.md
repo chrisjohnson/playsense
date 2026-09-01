@@ -131,6 +131,11 @@ full. Design around them, do not fight them:
   `docker run -d --name litellm-fwd --restart unless-stopped --network host
   alpine:3.20 sh -c 'apk add --no-cache socat; exec socat
   TCP-LISTEN:4001,bind=172.17.0.1,fork,reuseaddr TCP:127.0.0.1:4000'`
+  As of now the host's own litellm stack (litellm-proxy + queue haproxies)
+  serves 172.17.0.1:4001 directly; use the socat recipe only if that goes
+  away. medium-moe answers small prompts but is flaky on the large
+  relevance/classification batches while it is being developed - the app
+  falls back to keyword mode per search, which is the expected behavior.
 - **Mock LLM for dev**: `python3 backend/tests/mock_llm_server.py [port]`
   (OpenAI-compatible, deterministic keyword-based relevance answers). As a
   sibling: `docker run -d --name llm-mock --restart unless-stopped
