@@ -68,7 +68,7 @@ function dlStatus(p: PlaylistItem) {
   );
 }
 
-export default function Home({ onOpenTracks, authUrl, onAuthed, configured, onRefresh, authed, display, oauthMsg }: Props) {
+export default function Home({ onOpenTracks, onAuthed, configured, onRefresh, authed, display, oauthMsg }: Props) {
   const [pls, setPls] = useState<PlaylistItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<number | null>(null);

@@ -10,6 +10,7 @@ import Grid from '@mui/material/Grid';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
 import LinearProgress from '@mui/material/LinearProgress';
+import Link from '@mui/material/Link';
 
 import { api, PlaylistItem } from '../api';
 
@@ -22,16 +23,23 @@ export default function Generate({ authed }: Props) {
   const [name, setName] = useState('My Generated Playlist');
   const [desc, setDesc] = useState('');
   const [q, setQ] = useState('');
-  const [pid, setPid] = useState(0);
-  const [lang, setLang] = useState('es');
-  const [regions, setRegions] = useState('Mexico');
-  const [isMexican, setIsMexican] = useState(true);
-  const [isLatin, setIsLatin] = useState(true);
-  const [useSemantic, setUseSemantic] = useState(true);
+  const [pid, setPid] = useState<number | ''>('');
+  const [artist, setArtist] = useState('');
+  const [album, setAlbum] = useState('');
+  const [title, setTitle] = useState('');
+  const [minYear, setMinYear] = useState('');
+  const [maxYear, setMaxYear] = useState('');
+  const [language, setLanguage] = useState('');
   const [push, setPush] = useState(true);
 
   useEffect(() => {
-    api.playlists().then((d) => setPlaylists(Array.isArray(d) ? d : [])).catch(() => {});
+    api.playlists()
+      .then((d: PlaylistItem[]) => {
+        const list = Array.isArray(d) ? d : [];
+        setPlaylists(list);
+        setPid((cur) => (cur === '' && list.length ? list[0].id : cur));
+      })
+      .catch(() => {});
   }, []);
 
   const run = async () => {
@@ -40,12 +48,17 @@ export default function Generate({ authed }: Props) {
     setBusy(true); setResult(null);
     try {
       const searchBody: any = {
-        q, languages: lang ? [lang] : [],
-        regions: regions ? regions.split(',').map((s) => s.trim()).filter(Boolean) : [],
-        is_mexican: isMexican, is_latin_american: isLatin,
-        use_semantic: useSemantic, limit: 100,
+        playlist_id: Number(pid),
+        q: q.trim() || null,
+        title: title.trim() || null,
+        artist: artist.trim() || null,
+        album: album.trim() || null,
+        min_year: minYear ? Number(minYear) : null,
+        max_year: maxYear ? Number(maxYear) : null,
+        language: language || null,
+        use_semantic: true,
+        limit: 100,
       };
-      if (pid) searchBody.playlist_id = pid;
       const r = await api.generate({ name, description: desc, search: searchBody, push_to_spotify: push });
       setResult(r);
     } catch (e: any) {
@@ -59,59 +72,76 @@ export default function Generate({ authed }: Props) {
     <Box>
       <Typography variant="h5" gutterBottom>Generate & push playlist</Typography>
       <Typography color="text.secondary" sx={{ mb: 3 }}>
-        Search within a source playlist, then generate a new one from the matches.
-        With push enabled, the result is sent back to your Spotify account.
+        Search within a source playlist, then create a new playlist from the matches.
+        With push enabled, the result is sent to your Spotify account.
       </Typography>
       <Grid container spacing={2}>
-        <Grid item xs={12}>
-          <TextField select size="small" label="Source playlist" value={pid}
-            onChange={(e) => setPid(Number(e.target.value))} fullWidth>
-            {playlists.map((p) => <MenuItem key={p.id} value={p.id}>{p.name} ({p.track_count})</MenuItem>)}
+        <Grid item xs={12} md={6}>
+          <TextField
+            select fullWidth size="small" label="Source playlist" value={pid}
+            onChange={(e) => setPid(Number(e.target.value))}
+            InputProps={{ 'aria-label': 'source playlist' }}
+          >
+            {playlists.map((p) => (
+              <MenuItem key={p.id} value={p.id}>{p.name} ({p.track_count})</MenuItem>
+            ))}
           </TextField>
         </Grid>
-        <Grid item xs={12}>
-          <TextField fullWidth size="small" label="Name" value={name}
-            onChange={(e) => setName(e.target.value)} />
+        <Grid item xs={12} md={6}>
+          <TextField
+            fullWidth size="small" label="New playlist name" value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
         </Grid>
         <Grid item xs={12}>
-          <TextField fullWidth size="small" label="Description" value={desc}
-            onChange={(e) => setDesc(e.target.value)} multiline minRows={2} />
+          <TextField
+            fullWidth size="small" label="Description (optional)" value={desc}
+            onChange={(e) => setDesc(e.target.value)} multiline minRows={2}
+          />
         </Grid>
         <Grid item xs={12}>
-          <TextField fullWidth size="small" label="Free-text semantic query" value={q}
-            onChange={(e) => setQ(e.target.value)} placeholder="e.g. summer party vibes" />
+          <TextField
+            fullWidth size="small" label="Free-text query (semantic, interpreted by the LLM — optional)" value={q}
+            onChange={(e) => setQ(e.target.value)} placeholder='e.g. “mariachi music” or “mexican and mexican-inspired”'
+          />
         </Grid>
         <Grid item xs={6} sm={3}>
-          <TextField select size="small" label="Language" value={lang}
-            onChange={(e) => setLang(e.target.value)} fullWidth>
-            <MenuItem value="es">Spanish</MenuItem>
-            <MenuItem value="en">English</MenuItem>
+          <TextField size="small" label="Artist" value={artist} fullWidth
+            onChange={(e) => setArtist(e.target.value)} inputProps={{ 'aria-label': 'artist' }} />
+        </Grid>
+        <Grid item xs={6} sm={3}>
+          <TextField size="small" label="Album" value={album} fullWidth
+            onChange={(e) => setAlbum(e.target.value)} inputProps={{ 'aria-label': 'album' }} />
+        </Grid>
+        <Grid item xs={6} sm={3}>
+          <TextField size="small" label="Title" value={title} fullWidth
+            onChange={(e) => setTitle(e.target.value)} inputProps={{ 'aria-label': 'title' }} />
+        </Grid>
+        <Grid item xs={6} sm={3}>
+          <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
+            <TextField size="small" label="Year" type="number" value={minYear} fullWidth
+              onChange={(e) => setMinYear(e.target.value)} inputProps={{ 'aria-label': 'min year' }} />
+            <Typography color="text.secondary">–</Typography>
+            <TextField size="small" label="Year" type="number" value={maxYear} fullWidth
+              onChange={(e) => setMaxYear(e.target.value)} inputProps={{ 'aria-label': 'max year' }} />
+          </Box>
+        </Grid>
+        <Grid item xs={6} sm={3}>
+          <TextField size="small" select label="Language" value={language} fullWidth
+            onChange={(e) => setLanguage(e.target.value)}>
             <MenuItem value="">Any</MenuItem>
+            <MenuItem value="es">Spanish</MenuItem>
           </TextField>
         </Grid>
         <Grid item xs={6} sm={3}>
-          <TextField size="small" label="Regions (comma-separated)" value={regions}
-            onChange={(e) => setRegions(e.target.value)} fullWidth />
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <FormControlLabel control={<Checkbox checked={isMexican} onChange={(e) => setIsMexican(e.target.checked)} />}
-            label="Mexican only" />
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <FormControlLabel control={<Checkbox checked={isLatin} onChange={(e) => setIsLatin(e.target.checked)} />}
-            label="Latin American only" />
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <FormControlLabel control={<Checkbox checked={useSemantic} onChange={(e) => setUseSemantic(e.target.checked)} />}
-            label="Use semantic (LLM) classification" />
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <FormControlLabel control={<Checkbox checked={push} onChange={(e) => setPush(e.target.checked)} />}
-            label="Push to Spotify" />
+          <FormControlLabel
+            control={<Checkbox checked={push} onChange={(e) => setPush(e.target.checked)} />}
+            label="Push to Spotify"
+          />
         </Grid>
         <Grid item xs={12}>
-          <Button variant="contained" color="primary" onClick={run} disabled={busy || !pid}>
-            {busy ? 'Generating...' : push ? 'Generate & push to Spotify' : 'Search & preview'}
+          <Button variant="contained" onClick={run} disabled={busy || !pid}>
+            {busy ? 'Generating…' : push ? 'Generate & push to Spotify' : 'Generate (local only)'}
           </Button>
         </Grid>
       </Grid>
@@ -121,9 +151,16 @@ export default function Generate({ authed }: Props) {
           <Typography variant="h6">Result</Typography>
           <Card variant="outlined" sx={{ mt: 1 }}>
             <CardContent>
-              <Typography variant="body2">Matched: {result.matched_count}</Typography>
+              {result.matched_count != null ? (
+                <Typography variant="body2">Matched: {result.matched_count} tracks</Typography>
+              ) : null}
               {result.spotify_playlist_id ? (
-                <Typography variant="body2">Pushed to Spotify: {result.spotify_external_url}</Typography>
+                <Typography variant="body2">
+                  Pushed to Spotify:{' '}
+                  <Link href={result.spotify_external_url} target="_blank" rel="noreferrer">
+                    {result.spotify_external_url}
+                  </Link>
+                </Typography>
               ) : null}
               {result.export_path ? (
                 <Typography variant="body2">Exported to: {result.export_path}</Typography>

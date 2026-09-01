@@ -112,3 +112,50 @@ full. Design around them, do not fight them:
   `docker inspect api`); the old failure mode was running api without it, losing
   tokens+progress when the container was recreated. Refresh tokens also expire
   after ~6 months: user must click Connect again.
+
+## 6. LLM inference (semantic search / classification)
+
+- The api container reads inference settings from the git-ignored `.env` in the
+  repo root (NEVER commit it; it holds the LiteLLM API key). Start api with
+  `--env-file <repo-host-path>/.env`. Settings: INFERENCE_BASE_URL,
+  INFERENCE_MODEL (medium-moe), INFERENCE_API_KEY.
+- LiteLLM proxy runs on the HOST's 127.0.0.1:4000 (host networking, not
+  reachable from containers). The `litellm-fwd` container (socat, host
+  networking, binds 172.17.0.1:4001 -> 127.0.0.1:4000) exposes it to the docker
+  bridges; api reaches it at `http://172.17.0.1:4001/v1`. Recreate it with:
+  `docker run -d --name litellm-fwd --restart unless-stopped --network host
+  alpine:3.20 sh -c 'apk add --no-cache socat; exec socat
+  TCP-LISTEN:4001,bind=172.17.0.1,fork,reuseaddr TCP:127.0.0.1:4000'`
+- **Mock LLM for dev**: `python3 backend/tests/mock_llm_server.py [port]`
+  (OpenAI-compatible, deterministic keyword-based relevance answers). As a
+  sibling: `docker run -d --name llm-mock --restart unless-stopped
+  --network sp-tracker-net -v <repo>/backend/tests/mock_llm_server.py:/mock.py:ro
+  python:3.12-slim python3 /mock.py 8901`; point INFERENCE_BASE_URL at
+  http://llm-mock:8901/v1 (INFERENCE_MODEL=mock-moe). Use this to exercise the
+  full semantic path when no real model is up.
+- Search semantics (the intended split): metadata that EXISTS gets traditional
+  filters (POST /api/search: title/artist/album contains, min/max year,
+  language) - plain SQL, no LLM. Free-text `q` is the SEMANTIC path: query +
+  each track's metadata go to the LLM (keyword-token recall over all matches
+  first, then LLM re-score in batches of 25, max 200 candidates, score >= 0.5
+  kept), so "mariachi music" / "mexican and mexican-inspired" work. If the LLM
+  is unreachable it falls back to keyword token matching and reports
+  `semantic: "keyword"` (UI shows an amber chip). Never silently mix the two.
+- The is_mexican/is_latin_american/region columns are HEURISTIC/LLM
+  classification output (see /api/playlists/{id}/classify) - NOT trustworthy
+  metadata, so search does not expose them as filters ("mexican music" is a
+  semantic query). The classification heuristic is token-based (word/token
+  matching, never substring - substring matching is how "leon" in "leonard"
+  and "grupo" in "Grupo Batuque" used to false-positive). Language detection
+  only sets es when a Spanish marker token is present - it must NOT default
+  missing to es.
+- adapter.ClassificationResult.from_dict must reject responses missing the
+  required classification keys as a FAILED semantic call (error set); defaulting
+  missing keys to False/"" would mark tracks confidently non-Latin with
+  strategy=llm. The mock LLM relies on this for non-relevance prompts.
+- router.classify: use_semantic is a Body(embed=True) param - a bare
+  `bool = True` would become a query param and the body value is silently
+  ignored (this happened and a mock-LLM run marked 5260 tracks strategy=llm).
+- Audio-feature filters were REMOVED (dev mode never returns audio features;
+  min/max energy/tempo/valence/danceability filters on NULL columns hid every
+  result). Don't reintroduce them without a real data source.

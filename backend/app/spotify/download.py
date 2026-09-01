@@ -150,26 +150,6 @@ def _saved_progress(db, pl: Playlist) -> tuple:
     return len(rows), max(r.playlist_track_index for r in rows) + 1
 
 
-def _batch_audio_features(api: SpotifyAPI, ids):
-    """Batch audio features — only available to extended-quota apps; dev-mode
-    apps get 403/404 (the batch endpoint was removed in the Feb-2026 changes).
-    Keep for the future; the worker does not call this by default."""
-    results = {}
-    for i in range(0, len(ids), 50):
-        chunk = ids[i:i + 50]
-        try:
-            data = api.get("/audio-features", params={"ids": ",".join(chunk)})
-        except Exception as e:
-            s = str(e)
-            if "403" in s or "404" in s:
-                break
-            continue
-        for feat in data.get("audio_features", []) or []:
-            if feat and feat.get("id"):
-                results[feat["id"]] = feat
-    return results
-
-
 def download_playlist(api: SpotifyAPI, playlist_db_id: int) -> dict:
     """One grind step: fetch as many pages as the quota allows, committing per page.
 

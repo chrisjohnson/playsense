@@ -16,7 +16,7 @@ async function req(path: string, opts?: RequestInit): Promise<any> {
 export const api = {
   health: () => req('/health'),
   authStatus: () => req('/auth/status'),
-  authorize: (state?: string) => req('/oauth/authorize', { method: 'GET' }),
+  authorize: () => req('/oauth/authorize', { method: 'GET' }),
   authorizeRaw: () => fetch('/api/oauth/authorize', { method: 'GET' }).then((r) => r.json()),
   playlists: () => req('/playlists'),
   download: (id: number) => req(`/playlists/${id}/download`, { method: 'POST' }),
@@ -36,21 +36,27 @@ export type Track = {
   id: number;
   spotify_track_id: string;
   name: string;
-  artists: any[];
+  artists: { id?: string; name: string }[];
   album_name: string;
   release_date: string;
   duration_ms?: number;
   uri: string;
-  is_mexican: boolean;
-  is_latin_american: boolean;
-  region: string;
-  language: string;
-  genres: any[];
-  classification_strategy: string;
-  energy?: number;
-  tempo?: number;
-  valence?: number;
-  danceability?: number;
+  external_url?: string;
+  is_mexican?: boolean;
+  is_latin_american?: boolean;
+  region?: string;
+  language?: string;
+  genres?: any[];
+  classification_strategy?: string;
+  match_reason?: string;
+};
+
+export type SearchResponse = {
+  total: number;
+  count: number;
+  semantic: 'off' | 'llm' | 'keyword';
+  query: string;
+  tracks: Track[];
 };
 
 export type PlaylistItem = {

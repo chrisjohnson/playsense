@@ -1,7 +1,8 @@
 from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
-from pydantic import BaseModel
+import json as _json
+from pydantic import BaseModel, field_validator
 
 
 class PlaylistOut(BaseModel):
@@ -28,13 +29,6 @@ class TrackOut(BaseModel):
     duration_ms: Optional[int] = None
     uri: str = ""
     external_url: str = ""
-    danceability: Optional[float] = None
-    energy: Optional[float] = None
-    tempo: Optional[float] = None
-    valence: Optional[float] = None
-    acousticness: Optional[float] = None
-    key: Optional[int] = None
-    time_signature: Optional[int] = None
     is_latin_american: bool = False
     is_mexican: bool = False
     region: str = ""
@@ -44,6 +38,18 @@ class TrackOut(BaseModel):
     run_id: Optional[int] = None
 
     model_config = {"from_attributes": True}
+
+    @field_validator("artists", "genres", mode="before")
+    @classmethod
+    def _parse_json_lists(cls, v):
+        # artists/genres are stored as JSON text on the model; the API must
+        # return them as arrays (the frontend .map()s over them).
+        if isinstance(v, str):
+            try:
+                return _json.loads(v) or []
+            except _json.JSONDecodeError:
+                return []
+        return v or []
 
 
 class ClassificationRunOut(BaseModel):
@@ -62,25 +68,24 @@ class ClassificationRunOut(BaseModel):
 
 
 class SearchQuery(BaseModel):
-    """Structured + semantic filter request."""
+    """Traditional metadata filters + optional semantic (LLM) free-text.
+
+    The metadata filters (title/artist/album/year/language) are plain
+    structured search - instant, no LLM. `q` is the semantic part: the query
+    plus each track's metadata goes to the LLM, so free-text like
+    "mariachi music" or "mexican and mexican-inspired" works. Audio-feature
+    filters were removed earlier (dev mode never returns audio features).
+    """
     playlist_id: Optional[int] = None
     q: Optional[str] = None
-    languages: list[str] = []
-    regions: list[str] = []
-    is_mexican: Optional[bool] = None
-    is_latin_american: Optional[bool] = None
-    min_energy: Optional[float] = None
-    max_energy: Optional[float] = None
-    min_tempo: Optional[float] = None
-    max_tempo: Optional[float] = None
-    min_valence: Optional[float] = None
-    max_valence: Optional[float] = None
-    min_danceability: Optional[float] = None
-    explicit_only: Optional[bool] = None
+    title: Optional[str] = None
+    artist: Optional[str] = None
+    album: Optional[str] = None
     min_year: Optional[int] = None
     max_year: Optional[int] = None
+    language: Optional[str] = None
     use_semantic: bool = True
-    limit: int = 200
+    limit: int = 500
 
 
 class GeneratePlaylistIn(BaseModel):

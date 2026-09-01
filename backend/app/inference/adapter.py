@@ -27,6 +27,23 @@ CLASSIFICATION_USER_TEMPLATE = (
     "Classify per the instructions."
 )
 
+RELEVANCE_SYSTEM_PROMPT = (
+    "You are a precise music search assistant. You receive a natural-language "
+    "query and a numbered list of tracks (index, artists, title, album, year). "
+    "A track is relevant only if it would genuinely satisfy the query: the same "
+    "song, artist or album, or a strong topical/style match. When in doubt, "
+    "mark it not relevant. Return ONLY a JSON object with key \"results\": an "
+    "array with exactly one entry per track, each "
+    "{\"id\": <index from the list>, \"relevant\": <bool>, \"score\": <float 0..1>, "
+    "\"reason\": \"<max 8 words>\"}."
+)
+
+RELEVANCE_USER_TEMPLATE = (
+    "Query: {query}\n"
+    "Tracks:\n{tracks}\n"
+    "Return the JSON results."
+)
+
 JSON_SCHEMA = {
     "type": "object",
     "properties": {
@@ -57,6 +74,14 @@ class ClassificationResult:
 
     @classmethod
     def from_dict(cls, d: dict, strategy: str) -> "ClassificationResult":
+        # A response missing required fields is a FAILED semantic call, not a
+        # "no" answer - defaulting missing keys to False/"" would mark every
+        # such track as confidently non-Latin (and strategy would read "llm").
+        required = ("is_mexican", "is_latin_american", "region", "language",
+                    "confidence", "reasoning")
+        missing = [k for k in required if k not in d]
+        if missing:
+            return cls(strategy=strategy, error="missing fields: " + ", ".join(missing))
         try:
             return cls(
                 is_mexican=bool(d.get("is_mexican", False)),
@@ -116,3 +141,42 @@ class InferenceAdapter:
             return ClassificationResult.from_dict(parsed, "llm")
         except Exception as e:
             return ClassificationResult(strategy="llm", error=str(e))
+
+    def relevance_batch(self, query: str, tracks: list) -> dict:
+        """Score a batch of slim tracks against a free-text query (one LLM call).
+
+        tracks: [{"id": int, "title": str, "artists": [str], "album": str, "year": str}]
+        Returns {track_id: {"relevant": bool, "score": float, "reason": str}}.
+        Raises on any failure — the caller decides the fallback (keyword match).
+        """
+        lines = []
+        for i, t in enumerate(tracks):
+            artists = ", ".join(t.get("artists") or []) or "?"
+            title = str(t.get("title") or "?").replace('"', "'")
+            album = str(t.get("album") or "?").replace('"', "'")
+            lines.append(
+                f'{i}: artists=[{artists}] title="{title}" '
+                f'album="{album}" year={t.get("year") or "?"}'
+            )
+        user_msg = RELEVANCE_USER_TEMPLATE.format(query=query, tracks="\n".join(lines))
+        content = self.chat([
+            {"role": "system", "content": RELEVANCE_SYSTEM_PROMPT},
+            {"role": "user", "content": user_msg},
+        ])
+        data = json.loads(content)
+        # The model answers with the list index (the tracks were sent numbered
+        # 0..n-1); map that back onto each track's real id.
+        out = {}
+        for r in data.get("results", []):
+            try:
+                idx = int(r["id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not (0 <= idx < len(tracks)):
+                continue
+            out[tracks[idx]["id"]] = {
+                "relevant": bool(r.get("relevant", False)),
+                "score": float(r.get("score", 0.0)),
+                "reason": str(r.get("reason", ""))[:140],
+            }
+        return out

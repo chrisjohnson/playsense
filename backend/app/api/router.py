@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from ..inference.runner import run_classification
 from ..inference.adapter import JSON_SCHEMA as LLM_SCHEMA
 from .schemas import *
-from .search import query_tracks, build_playlist_from_query
+from .search import run_search
 
 api_router = APIRouter()
 settings = get_settings()
@@ -145,7 +145,9 @@ def download(pl_id: int):
 
 
 @api_router.post("/playlists/{pl_id}/classify")
-def classify(pl_id: int, name: str = Body("...", embed=True), use_semantic: bool = True):
+def classify(pl_id: int, name: str = Body("...", embed=True), use_semantic: bool = Body(True, embed=True)):
+    # NOTE: use_semantic MUST stay a Body param - a bare `bool = True` would
+    # become a query param and the body value would be silently ignored.
     try:
         run = run_classification(pl_id, name, use_semantic=use_semantic)
         return run_to_out(run)
@@ -165,13 +167,12 @@ def list_tracks(pl_id: int):
 
 @api_router.post("/search")
 def search(q: SearchQuery):
-    tracks = build_playlist_from_query(q)
-    return {"count": len(tracks), "tracks": tracks}
+    return run_search(q)
 
 
 @api_router.post("/generate", response_model=GeneratePlaylistOut)
 def generate(body: GeneratePlaylistIn):
-    tracks = build_playlist_from_query(body.search)
+    tracks = run_search(body.search)["tracks"]
     result = {"matched_count": len(tracks)}
     if body.push_to_spotify:
         try:

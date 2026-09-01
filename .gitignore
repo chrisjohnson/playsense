@@ -16,3 +16,4 @@ coverage/
 .coverage
 certs/
 .buildhome/
+.ui-shots/

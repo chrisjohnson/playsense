@@ -19,6 +19,7 @@ export type TabName = 'home' | 'search' | 'generate' | 'runs' | 'tracks';
 
 export default function App() {
   const [tab, setTab] = useState<TabName>('home');
+  const [tracksId, setTracksId] = useState<number | null>(null);
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [display, setDisplay] = useState('');
   const [authUrl, setAuthUrl] = useState('');
@@ -99,11 +100,11 @@ export default function App() {
         </Tabs>
       </AppBar>
       <Container maxWidth="xl" sx={{ flexGrow: 1, py: 3 }}>
-        {tab === 'home' && <Home onOpenTracks={(id) => { setTab('tracks'); }} authUrl={authUrl} onAuthed={setAuthed} configured={configured} onRefresh={refreshAuth} authed={!!authed} display={display} oauthMsg={oauthMsg} />}
+        {tab === 'home' && <Home onOpenTracks={(id) => { setTracksId(id); setTab('tracks'); }} authUrl={authUrl} onAuthed={setAuthed} configured={configured} onRefresh={refreshAuth} authed={!!authed} display={display} oauthMsg={oauthMsg} />}
         {tab === 'search' && <Search authed={!!authed} />}
         {tab === 'generate' && <Generate authed={!!authed} />}
         {tab === 'runs' && <Runs />}
-        {tab === 'tracks' && <Tracks />}
+        {tab === 'tracks' && <Tracks initialId={tracksId} onPick={(id) => setTracksId(id)} />}
       </Container>
     </Box>
   );

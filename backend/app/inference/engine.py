@@ -1,20 +1,53 @@
 from __future__ import annotations
 import json
+import re
 from ..config import get_settings
 from ..inference.adapter import InferenceAdapter, ClassificationResult
 
-LANG_ES_MARKERS = ["de la", "los", "las", "para", "y", "una", "una", "mi", "con", "en"]
-MEXICAN_REGION_SIGNALS = ["mexico", "mexican", "mexicana", "banda", "norteno",
-    "mariachi", "ranchera", "corrido", "banda sinaloense", "grupo", "regional mexican",
-    "grupero", "tex-mex", "cumbia mexicana", "sierreno", "durangeno", "huapango",
-    "son jaliscience", "son jarocho"]
-LATIN_AMERICA_SIGNALS = ["cumbia", "reggaeton", "latin pop", "bachata", "salsa",
-    "merengue", "dembow", "trap latino", "latin", "latin america", "latino", "colombia",
-    "argentina", "chile", "peru", "cuba", "puerto rico", "venezuela", "guatemala", "bolivia",
-    "paraguay", "ecuador", "dominican", "panama", "costa rica", "el salvador", "honduras",
-    "nicaragua", "uruguay"]
-MEXICAN_CITIES = ["guadalajara", "monterrey", "ciudad mexico", "mexico city", "tijuana",
-    "leon", "puebla", "torreon", "sinaloa", "chihuahua", "zacatecas", "cuernavaca"]
+# Language: Spanish markers. Single-word markers match on whole tokens
+# (never substrings - "y"/"mi"/"en" as substrings matched almost everything,
+# which is why every track used to read language=es). Multi-word markers
+# match as phrases.
+LANG_ES_MARKERS = ["de la", "los", "las", "para", "una", "con",
+                   "el", "la", "del", "es", "por"]
+
+# Region signals. Single-word entries match whole tokens (variants listed
+# explicitly); multi-word entries match as phrases. "grupo" was removed -
+# it just means "group" in Spanish/Portuguese and matched Brazilian and
+# Italian bands. "leon" (city) removed - it false-positived on artist names.
+MEXICAN_REGION_SIGNALS = [
+    "mexico", "mexican", "mexicana", "mexicanas",
+    "banda", "bandas", "norteno", "norteño", "mariachi", "mariachis",
+    "ranchera", "rancheras", "corrido", "corridos",
+    "regional mexican", "grupero", "grupera", "tex-mex", "tex mex",
+    "cumbia mexicana", "sierreno", "sierreño", "durangeno",
+    "huapango", "huapangos", "son jalisciense", "son jarocho",
+]
+LATIN_AMERICA_SIGNALS = [
+    "cumbia", "reggaeton", "reggaetón", "latin pop", "bachata", "salsa",
+    "merengue", "dembow", "trap latino", "latin", "latino", "latina",
+    "latin america", "colombia", "argentina", "chile", "peru", "cuba",
+    "puerto rico", "venezuela", "guatemala", "bolivia", "paraguay",
+    "ecuador", "dominican", "panama", "costa rica", "el salvador",
+    "honduras", "nicaragua", "uruguay",
+]
+MEXICAN_CITIES = ["guadalajara", "monterrey", "ciudad mexico", "mexico city",
+    "tijuana", "puebla", "torreon", "sinaloa", "chihuahua", "zacatecas",
+    "cuernavaca"]
+
+_WORD_RE = re.compile(r"[a-zà-öø-ÿ0-9]+")
+
+
+def _tokens(text: str) -> set:
+    return set(_WORD_RE.findall(text.lower()))
+
+
+def _has(haystack: str, toks: set, sig: str) -> bool:
+    """Token-aware signal match: phrases by containment, words by token.
+    Substring matching ("leon" in "leonard") is the bug this replaces."""
+    if " " in sig or "-" in sig:
+        return sig in haystack or sig.replace("-", " ") in haystack
+    return sig in toks
 
 
 def _as_list(v) -> list:
@@ -28,27 +61,32 @@ def _join(x) -> str:
 
 
 def heuristic_classify(artists, album="", title="", year="", genres=""):
-    """Return (is_mexican, is_latin_american, region, language, signals)."""
+    """Return (is_mexican, is_latin_american, region, language, signals).
+
+    language is "" when no Spanish marker was found - callers must NOT
+    invent a default (that is how every track used to read es).
+    """
     haystack = " ".join([_join(artists), _join(album), _join(title), _join(genres)])
+    toks = _tokens(haystack)
     signals: list = []
     is_latin = False
     is_mex = False
     region = ""
     language = ""
 
-    if any(s in haystack for s in LANG_ES_MARKERS) or _join(title).startswith("es"):
+    if any(_has(haystack, toks, m) for m in LANG_ES_MARKERS):
         language = "es"
 
     for sig in MEXICAN_REGION_SIGNALS:
-        if sig in haystack:
+        if _has(haystack, toks, sig):
             signals.append(sig)
             is_mex = True
-    if any(c in haystack for c in MEXICAN_CITIES):
+    if any(_has(haystack, toks, c) for c in MEXICAN_CITIES):
         signals.append("mexican_city")
         is_mex = True
 
     for sig in LATIN_AMERICA_SIGNALS:
-        if sig in haystack:
+        if _has(haystack, toks, sig):
             signals.append(sig)
             is_latin = True
 
@@ -78,7 +116,7 @@ class ClassificationEngine:
             if (is_mex or is_latin) and conf >= self.threshold:
                 return ClassificationResult(
                     is_mexican=is_mex, is_latin_american=is_latin, region=region,
-                    language=language or "es",
+                    language=language,
                     confidence=conf, reasoning="keyword heuristic", signal=signals, strategy="keyword",
                 )
         if use_semantic:
@@ -93,7 +131,7 @@ class ClassificationEngine:
                 # report LLM use for a call that never succeeded.
                 return ClassificationResult(
                     is_mexican=is_mex, is_latin_american=is_latin,
-                    region=region, language=language or "es",
+                    region=region, language=language,
                     confidence=0.0,
                     reasoning="semantic inference unavailable: " + str(res.error),
                     signal=[], strategy="semantic_unavailable")

@@ -35,7 +35,7 @@ WORKDIR /build
 COPY docker/frontend/package.json docker/frontend/package-lock.json* ./
 RUN npm install --ignore-scripts
 COPY docker/frontend/ ./
-RUN npm run build
+RUN npx tsc --noEmit && npm run build
 
 # ---- Target: nginx serving the SPA + proxying /api ----
 FROM nginx:1.27-alpine AS frontend

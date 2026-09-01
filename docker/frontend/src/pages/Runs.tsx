@@ -16,6 +16,7 @@ interface Run {
   id: number;
   name: string;
   status: string;
+  strategy: string;
   llm_used: boolean;
   n_classified: number;
   n_mexican: number;
