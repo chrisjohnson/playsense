@@ -141,16 +141,26 @@ full. Design around them, do not fight them:
   sibling: `docker run -d --name llm-mock --restart unless-stopped
   --network sp-tracker-net -v <repo>/backend/tests/mock_llm_server.py:/mock.py:ro
   python:3.12-slim python3 /mock.py 8901`; point INFERENCE_BASE_URL at
-  http://llm-mock:8901/v1 (INFERENCE_MODEL=mock-moe). Use this to exercise the
-  full semantic path when no real model is up.
-- Search semantics (the intended split): metadata that EXISTS gets traditional
-  filters (POST /api/search: title/artist/album contains, min/max year,
-  language) - plain SQL, no LLM. Free-text `q` is the SEMANTIC path: query +
-  each track's metadata go to the LLM (keyword-token recall over all matches
-  first, then LLM re-score in batches of 25, max 200 candidates, score >= 0.5
-  kept), so "mariachi music" / "mexican and mexican-inspired" work. If the LLM
-  is unreachable it falls back to keyword token matching and reports
-  `semantic: "keyword"` (UI shows an amber chip). Never silently mix the two.
+  http://llm-mock:8901/v1 (INFERENCE_MODEL=mock-moe). Use this to exercise
+  the semantic/classifier paths when no real model is up. The mock also
+  answers the classifier batch format ("Classification question: ...") and
+  the 1st-pass type-inference prompt, so classifier runs and the job
+  manager are testable deterministically.
+- **Search is 0% LLM (by design; see docs/ai-classifiers.md).** The Search
+  page is client-side: it fetches all tracks of a playlist (with their
+  pre-computed `classifications`) plus the classifier list, then filters
+  synchronously in the browser - fuzzy text (substring + 1-edit distance over
+  title/artists/album), artist/album/title contains, year/duration range,
+  language, and one filter per AI classifier rendered by its field type
+  (boolean -> checkbox). A search never calls the model, so it is always
+  instant and never flaky. AI metadata is produced by the background job
+  manager (`app/jobmanager.py` + `app/api/classifier_jobs.py`): a daemon
+  thread steps ONE classifier job at a time (25 tracks/LLM call, strict JSON
+  schema + per-value validation, per-chunk commit), auto-scans for new work
+  (new classifiers / revision staleness / new tracks) and retries errors
+  after a backoff. Cancelling a job is also a PAUSE (suppresses the auto-
+  scan for that scope); a revision bump lifts the pause. Do NOT reintroduce
+  query-time LLM calls on the search path.
 - The is_mexican/is_latin_american/region columns are HEURISTIC/LLM
   classification output (see /api/playlists/{id}/classify) - NOT trustworthy
   metadata, so search does not expose them as filters ("mexican music" is a

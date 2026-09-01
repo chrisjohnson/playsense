@@ -294,7 +294,7 @@ export default function Search({ authed }: Props) {
           </Box>
           {activeClassifiers.map((c) => {
             const want = f.ai[c.id];
-            const stats = c.stats || { current: 0 };
+            const stats = c.stats || { current: 0, true_count: 0 };
             if (c.field_type === 'boolean') {
               return (
                 <FormControlLabel
@@ -302,7 +302,7 @@ export default function Search({ authed }: Props) {
                   control={<Checkbox size="small" checked={want === true} onChange={(e) => setAi(c.id, e.target.checked)} />}
                   label={
                     <Tooltip title={c.query}>
-                      <Typography variant="body2">{c.name} <Typography component="span" variant="caption" color="text.secondary">({stats.current ?? 0} true)</Typography></Typography>
+                      <Typography variant="body2">{c.name} <Typography component="span" variant="caption" color="text.secondary">({stats.true_count ?? 0} true)</Typography></Typography>
                     </Tooltip>
                   }
                 />

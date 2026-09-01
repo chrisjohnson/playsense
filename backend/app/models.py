@@ -139,6 +139,38 @@ class TrackClassification(Base):
     )
 
 
+class ClassifierJob(Base):
+    """One background classification pass over a (classifier, playlist) scope.
+    Created by the job manager's auto-scan (or manually) and stepped by the
+    manager thread until no work remains. Classification is an upsert keyed on
+    (track, classifier, revision), so a job is always resumable: interrupted
+    work simply still "needs work" on the next step. See docs/ai-classifiers.md."""
+
+    __tablename__ = "classifier_jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    classifier_id = Column(Integer, ForeignKey("classifiers.id"), nullable=False, index=True)
+    playlist_id = Column(Integer, ForeignKey("playlists.id"), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default="queued")
+    # queued | running | cancelling | done | error | cancelled
+    total = Column(Integer, default=0, nullable=False)   # tracks needing work at enqueue
+    done = Column(Integer, default=0, nullable=False)     # classified so far
+    failed = Column(Integer, default=0, nullable=False)   # bad rows so far (retried later)
+    attempts = Column(Integer, default=0, nullable=False)
+    error = Column(Text, default="")
+    retry_after = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+
+    classifier = relationship("Classifier")
+    playlist = relationship("Playlist")
+
+    __table_args__ = (
+        Index("ix_cj_scope_status", "classifier_id", "playlist_id", "status"),
+    )
+
+
 class ClassificationRun(Base):
     __tablename__ = "classification_runs"
 

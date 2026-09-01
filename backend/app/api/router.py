@@ -18,9 +18,11 @@ from ..inference.adapter import JSON_SCHEMA as LLM_SCHEMA
 from .schemas import *
 from .search import run_search, classifications_map
 from .classifiers import router as classifier_router  # noqa: F401
+from .classifier_jobs import router as classifier_jobs_router  # noqa: F401
 
 api_router = APIRouter()
 api_router.include_router(classifier_router)
+api_router.include_router(classifier_jobs_router)
 settings = get_settings()
 
 

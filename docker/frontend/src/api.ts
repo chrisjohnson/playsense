@@ -25,6 +25,16 @@ export const api = {
     req(`/playlists/${id}/classify`, { method: 'POST', body: JSON.stringify({ name, use_semantic: useSemantic }) }),
   search: (q: any) => req('/search', { method: 'POST', body: JSON.stringify(q) }),
   classifiers: () => req('/classifiers'),
+  createClassifier: (body: { name: string; query: string; field_type?: string }) =>
+    req('/classifiers', { method: 'POST', body: JSON.stringify(body) }),
+  updateClassifier: (id: number, body: { name?: string; query?: string; field_type?: string }) =>
+    req(`/classifiers/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  deleteClassifier: (id: number) => req(`/classifiers/${id}`, { method: 'DELETE' }),
+  classifierJobs: () => req('/classifier-jobs'),
+  enqueueClassifierJob: (body: { classifier_id: number; playlist_id?: number }) =>
+    req('/classifier-jobs', { method: 'POST', body: JSON.stringify(body) }),
+  cancelClassifierJob: (id: number) => req(`/classifier-jobs/${id}/cancel`, { method: 'POST' }),
+  deleteClassifierJob: (id: number) => req(`/classifier-jobs/${id}`, { method: 'DELETE' }),
   generate: (body: any) => req('/generate', { method: 'POST', body: JSON.stringify(body) }),
   runs: () => req('/runs'),
   saveCredentials: (client_id: string, client_secret: string) =>
@@ -62,7 +72,7 @@ export type Classifier = {
   revision: number;
   created_at: string;
   updated_at: string;
-  stats?: { total: number; current: number; stale: number; unclassified: number };
+  stats?: { total: number; current: number; stale: number; unclassified: number; true_count?: number | null };
 };
 
 export type SearchResponse = {
@@ -71,6 +81,24 @@ export type SearchResponse = {
   semantic: 'off' | 'llm' | 'keyword';
   query: string;
   tracks: Track[];
+};
+
+export type ClassifierJob = {
+  id: number;
+  classifier_id: number;
+  classifier_name: string | null;
+  playlist_id: number;
+  playlist_name: string | null;
+  status: 'queued' | 'running' | 'cancelling' | 'done' | 'error' | 'cancelled';
+  total: number;
+  done: number;
+  failed: number;
+  attempts: number;
+  error: string;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  retry_after: string | null;
 };
 
 export type PlaylistItem = {

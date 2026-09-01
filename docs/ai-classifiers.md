@@ -93,7 +93,7 @@ Cheap, single prompt, deterministic answer. If the call fails, creation
 still succeeds with `field_type=null` — the field is hidden in search until
 a type exists (manual or inferred).
 
-## 4. Batch run pipeline (the "full" system, post-MVP)
+## 4. Batch run pipeline (built: `app/jobmanager.py` + `app/api/classifier_jobs.py`)
 
 A background **job manager** (its own table: `classifier_jobs`) watches for
 work: new classifiers, stale values (revision bumps), new tracks. For each
@@ -119,6 +119,30 @@ unit of work it runs:
    Failures (timeout, HTTP ≥400) stop the job with a retryable state; the
    job manager resumes later. Rate limits / model flakiness are expected
    operating conditions, not errors to paper over.
+
+### How the manager actually works (implementation notes)
+
+- One daemon thread in the api process, ticking every 10s: step the oldest
+  active job by one pass (200 tracks ≈ 8 LLM calls), then retry due error
+  jobs (5-min backoff), then auto-scan. **One job steps at a time** — the
+  model is a shared, flaky resource.
+- **Auto-scan = the new-track hook.** "Needs work" (no current-revision row)
+  already covers new classifiers, staleness, and freshly downloaded tracks,
+  so one count query per (classifier, playlist) finds everything. No
+  download-worker wiring is needed; new tracks get picked up within a tick.
+- **Cancellation is cooperative AND a pause.** Cancel switches a job to
+  `cancelling`; the loop honors it between passes. A `cancelled` job
+  suppresses the auto-scan for its scope — cancelling means "stop, and stay
+  stopped" (otherwise the scan would just re-enqueue it 10s later, making
+  the button pointless). Manual "Classify all" re-enqueues over a pause,
+  and a classifier revision bump lifts the pause (cancelled jobs are
+  deleted) since a redefinition is new work.
+- **Resumable by construction.** A step is bounded; progress is per-chunk
+  commits plus the job row. Container restarts, LLM outages, and cancels all
+  leave the scope simply "still needing work".
+- Manual controls: `GET /api/classifier-jobs` (progress),
+  `POST /api/classifier-jobs` (enqueue one scope or all playlists),
+  `POST /api/classifier-jobs/{id}/cancel`, `DELETE` for terminal jobs.
 
 ### Chunk size
 25 tracks ≈ 2–3 KB of prompt per chunk. 5,324 tracks ≈ 214 calls. At a few
@@ -174,9 +198,9 @@ design:
 - The mock LLM (`backend/tests/mock_llm_server.py`) remains a dev tool for
   exercising classifier runs without the real model.
 
-## 8. MVP scope (this phase)
+## 8. Phase status
 
-**In:**
+**MVP (done):**
 - Schema: `classifiers` + `track_classifications` (final shape, §9) — built
   now so nothing re-migrates later.
 - Classifier API: list / create (with optional type inference) / update
@@ -193,13 +217,21 @@ design:
 - A sample run over a handful of tracks proves the loop end to end; the
   search page shows the field as a checkbox and filters instantly.
 
-**Out (phases after):**
-- "Manage AI classifiers" UI page (add/edit/delete; type inference surfaced).
-- Background job manager + `classifier_jobs` table (auto-pickup of new
-  classifiers / staleness / new tracks, resume-on-failure, progress).
-- Download-worker hook that enqueues new tracks under active classifiers.
-- Dynamic generated playlists + cron sync.
-- Removal of legacy columns/endpoints/UI.
+**Job manager phase (done):**
+- `classifier_jobs` table + the background manager (§4): auto-enqueue of new
+  classifiers / staleness / new tracks, one-pass-at-a-time stepping,
+  per-chunk resume, error backoff + auto-retry, cooperative cancel-as-pause.
+- "AI Classifiers" page (app tab): add form (name + natural-language
+  definition + optional field type, else 1st-pass LLM inference), classifier
+  table with live stats (incl. true-count for booleans), "Classify all"
+  manual enqueue, and a jobs table with live progress bars, errors, cancel
+  and remove. Polls every 8s while open.
+- Classifier list/create/update/delete API surfaced in the UI (the original
+  "Manage AI classifiers" page, in this form).
+
+**Remaining phases:**
+- Dynamic generated playlists + cron sync (§6).
+- Removal of legacy columns/endpoints/UI (§7).
 
 ## 9. Schema (as built)
 
@@ -225,6 +257,23 @@ CREATE TABLE track_classifications (
     UNIQUE (track_id, classifier_id)
 );
 CREATE INDEX ix_tc_classifier ON track_classifications(classifier_id, classifier_revision);
+
+CREATE TABLE classifier_jobs (
+    id              INTEGER PRIMARY KEY,
+    classifier_id   INTEGER NOT NULL REFERENCES classifiers(id),
+    playlist_id     INTEGER NOT NULL REFERENCES playlists(id),
+    status          TEXT    NOT NULL DEFAULT 'queued',  -- queued|running|cancelling|done|error|cancelled
+    total           INTEGER NOT NULL DEFAULT 0,        -- tracks needing work at enqueue
+    done            INTEGER NOT NULL DEFAULT 0,
+    failed          INTEGER NOT NULL DEFAULT 0,        -- bad rows (stay unclassified, retried)
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    error           TEXT    DEFAULT '',
+    retry_after     DATETIME,                          -- error -> queued after backoff
+    created_at      DATETIME,
+    started_at      DATETIME,
+    finished_at     DATETIME
+);
+CREATE INDEX ix_cj_scope_status ON classifier_jobs(classifier_id, playlist_id, status);
 ```
 
 ## 10. Decisions & trade-offs worth remembering

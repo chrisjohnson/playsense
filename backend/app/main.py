@@ -22,6 +22,8 @@ async def lifespan(app: FastAPI):
     init_db()
     from .spotify.worker import start as start_download_worker
     start_download_worker()
+    from .jobmanager import start as start_job_manager
+    start_job_manager()
     yield
 
 

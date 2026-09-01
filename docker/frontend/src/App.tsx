@@ -13,9 +13,10 @@ import Search from './pages/Search';
 import Generate from './pages/Generate';
 import Runs from './pages/Runs';
 import Tracks from './pages/Tracks';
+import Classifiers from './pages/Classifiers';
 import { api } from './api';
 
-export type TabName = 'home' | 'search' | 'generate' | 'runs' | 'tracks';
+export type TabName = 'home' | 'search' | 'generate' | 'runs' | 'tracks' | 'ai';
 
 export default function App() {
   const [tab, setTab] = useState<TabName>('home');
@@ -72,7 +73,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const tabs: TabName[] = ['home', 'search', 'generate', 'runs', 'tracks'];
+  const tabs: TabName[] = ['home', 'search', 'generate', 'ai', 'runs', 'tracks'];
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
@@ -103,6 +104,7 @@ export default function App() {
         {tab === 'home' && <Home onOpenTracks={(id) => { setTracksId(id); setTab('tracks'); }} authUrl={authUrl} onAuthed={setAuthed} configured={configured} onRefresh={refreshAuth} authed={!!authed} display={display} oauthMsg={oauthMsg} />}
         {tab === 'search' && <Search authed={!!authed} />}
         {tab === 'generate' && <Generate authed={!!authed} />}
+        {tab === 'ai' && <Classifiers />}
         {tab === 'runs' && <Runs />}
         {tab === 'tracks' && <Tracks initialId={tracksId} onPick={(id) => setTracksId(id)} />}
       </Container>

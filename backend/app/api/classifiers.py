@@ -203,13 +203,21 @@ def _classifier_out(c: Classifier, total: int) -> dict:
         stale = db.query(func.count(TrackClassification.id)).filter(
             TrackClassification.classifier_id == c.id,
             TrackClassification.classifier_revision != c.revision).scalar() or 0
+        true_count = None
+        if c.field_type == "boolean":
+            # how many current values are `true` (the Search checkbox pass count)
+            true_count = db.query(func.count(TrackClassification.id)).filter(
+                TrackClassification.classifier_id == c.id,
+                TrackClassification.classifier_revision == c.revision,
+                TrackClassification.value == "true").scalar() or 0
     finally:
         db.close()
     return {
         "id": c.id, "name": c.name, "query": c.query, "field_type": c.field_type,
         "revision": c.revision, "created_at": c.created_at, "updated_at": c.updated_at,
         "stats": {"total": total, "current": current, "stale": stale,
-                  "unclassified": max(0, total - current - stale)},
+                  "unclassified": max(0, total - current - stale),
+                  "true_count": true_count},
     }
 
 
@@ -282,6 +290,13 @@ def update_classifier(cid: int, body: ClassifierUpdate):
         if changed:
             c.revision += 1
             c.updated_at = datetime.utcnow()
+            # redefinition = new work: lift any pause from cancelled jobs so the
+            # auto-scan re-enqueues this classifier's scopes
+            from ..models import ClassifierJob
+            db.query(ClassifierJob).filter(
+                ClassifierJob.classifier_id == cid,
+                ClassifierJob.status == "cancelled",
+            ).delete(synchronize_session=False)
         db.commit()
         db.refresh(c)
         return _classifier_out(c, db.query(func.count(Track.id)).scalar() or 0)
@@ -293,10 +308,13 @@ def update_classifier(cid: int, body: ClassifierUpdate):
 def delete_classifier(cid: int):
     db = SessionLocal()
     try:
+        from ..models import ClassifierJob
         c = db.get(Classifier, cid)
         if c is None:
             raise HTTPException(404, "Classifier not found")
-        db.delete(c)
+        # drop any jobs (live ones stop being stepped once the classifier is gone)
+        db.query(ClassifierJob).filter(ClassifierJob.classifier_id == cid).delete(synchronize_session=False)
+        db.delete(c)  # cascade deletes track_classifications rows
         db.commit()
         return {"status": "deleted"}
     finally:
