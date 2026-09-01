@@ -34,6 +34,7 @@ export const api = {
   enqueueClassifierJob: (body: { classifier_id: number; playlist_id?: number }) =>
     req('/classifier-jobs', { method: 'POST', body: JSON.stringify(body) }),
   cancelClassifierJob: (id: number) => req(`/classifier-jobs/${id}/cancel`, { method: 'POST' }),
+  retryClassifierJob: (id: number) => req(`/classifier-jobs/${id}/retry`, { method: 'POST' }),
   deleteClassifierJob: (id: number) => req(`/classifier-jobs/${id}`, { method: 'DELETE' }),
   generate: (body: any) => req('/generate', { method: 'POST', body: JSON.stringify(body) }),
   runs: () => req('/runs'),

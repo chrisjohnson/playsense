@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     inference_base_url: str = "http://host.docker.internal:11434/v1"
     inference_api_key: str = ""
     inference_model: str = "llama3.1:8b"
-    inference_timeout_seconds: float = 60.0
+    inference_timeout_seconds: float = 300.0  # read timeout; connect is capped at 15s
     semantic_confidence_threshold: float = 0.85
 
     # ---- App ----

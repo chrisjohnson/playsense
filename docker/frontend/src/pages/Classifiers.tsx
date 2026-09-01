@@ -84,9 +84,17 @@ export default function Classifiers() {
     setError('');
     try {
       const r: any = await api.enqueueClassifierJob({ classifier_id: cid });
-      setNotice('Enqueued ' + (r.created?.length ?? 0) + ' job(s)');
+      let msg = 'Enqueued ' + (r.created?.length ?? 0) + ' job(s)';
+      if (r.no_work_playlists?.length) msg += ' - ' + r.no_work_playlists.length + ' playlist(s) have no work yet (empty or fully classified)';
+      setNotice(msg);
       refresh();
     } catch (e: any) { setError(e?.message || String(e)); }
+  };
+
+  const retry = async (jid: number) => {
+    setError('');
+    try { await api.retryClassifierJob(jid); refresh(); }
+    catch (e: any) { setError(e?.message || String(e)); }
   };
 
   const cancel = async (jid: number) => {
@@ -232,17 +240,28 @@ export default function Classifiers() {
                     </TableCell>
                     <TableCell align="center">{j.failed || 0}</TableCell>
                     <TableCell align="center">{elapsed(j)}</TableCell>
-                    <TableCell sx={{ maxWidth: 220 }}>
-                      {j.error ? <Tooltip title={j.error}><Typography noWrap variant="caption" color="error">{j.error}</Typography></Tooltip> : null}
-                      {j.status === 'error' && !j.error ? <Typography variant="caption" color="error">failed — retrying after backoff</Typography> : null}
+                    <TableCell sx={{ maxWidth: 280 }}>
+                      {j.error ? (
+                        <Box>
+                          <Typography noWrap variant="caption" color="error">{j.error}</Typography>
+                          {j.status === 'error' && j.retry_after ? (
+                            <Typography variant="caption" color="text.secondary">retrying at {new Date(j.retry_after).toLocaleTimeString()}</Typography>
+                          ) : null}
+                        </Box>
+                      ) : null}
                     </TableCell>
                     <TableCell align="right">
-                      {active ? (
-                        <Button size="small" color="warning" startIcon={<StopIcon />} onClick={() => cancel(j.id)}>Cancel</Button>
-                      ) : null}
-                      {['done', 'cancelled', 'error'].includes(j.status) ? (
-                        <Button size="small" onClick={() => deleteJob(j.id)}>Remove</Button>
-                      ) : null}
+                      <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'flex-end' }}>
+                        {active ? (
+                          <Button size="small" color="warning" startIcon={<StopIcon />} onClick={() => cancel(j.id)}>Cancel</Button>
+                        ) : null}
+                        {j.status === 'error' ? (
+                          <Button size="small" startIcon={<RefreshIcon />} onClick={() => retry(j.id)}>Retry now</Button>
+                        ) : null}
+                        {['done', 'cancelled', 'error'].includes(j.status) ? (
+                          <Button size="small" onClick={() => deleteJob(j.id)}>Remove</Button>
+                        ) : null}
+                      </Box>
                     </TableCell>
                   </TableRow>
                 );

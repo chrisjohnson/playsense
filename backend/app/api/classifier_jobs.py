@@ -63,17 +63,21 @@ def enqueue_jobs(body: EnqueueBody, db=Depends(get_db)):
         playlist_ids = [p.id for p in db.query(Playlist).all()]
 
     from ..jobmanager import _has_running_job, _needing
-    created, skipped = [], []
+    created, skipped, no_work = [], [], []
     for pid in playlist_ids:
         if _has_running_job(db, cls.id, pid):  # paused (cancelled) scopes are enqueuable
             skipped.append(pid)
             continue
         n = _needing(db, cls, pid)
+        if n == 0:
+            no_work.append(pid)  # empty playlist / fully classified: no job needed
+            continue
         job = ClassifierJob(classifier_id=cls.id, playlist_id=pid, status="queued", total=n)
         db.add(job)
         created.append(job)
     db.commit()
-    return {"created": [_out(j) for j in created], "skipped_playlists": skipped}
+    return {"created": [_out(j) for j in created], "skipped_playlists": skipped,
+            "no_work_playlists": no_work}
 
 
 @router.post("/{job_id}/cancel")
@@ -89,6 +93,21 @@ def cancel_job(job_id: int, db=Depends(get_db)):
         job.status = "cancelling"
     else:
         raise HTTPException(409, f"Job is not active (status={job.status})")
+    db.commit()
+    return _out(job)
+
+
+@router.post("/{job_id}/retry")
+def retry_job(job_id: int, db=Depends(get_db)):
+    """Send an error/cancelled job straight back to the front of the queue
+    (skips the backoff)."""
+    job = db.get(ClassifierJob, job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found")
+    if job.status not in ("error", "cancelled"):
+        raise HTTPException(409, f"Only error/cancelled jobs can be retried (status={job.status})")
+    job.status = "queued"
+    job.retry_after = None
     db.commit()
     return _out(job)
 

@@ -109,11 +109,24 @@ def _has_running_job(db, classifier_id: int, playlist_id: int) -> bool:
     ).first() is not None
 
 
+def _summarize_error(msg: str) -> str:
+    """Raw LLM/transport errors are litellm JSON blobs; the UI shows this,
+    so keep it short and actionable."""
+    m = (msg or "").lower()
+    if "inference 5" in m or "connection error" in m or "connect" in m and "refused" in m:
+        return "LLM unreachable (model backend down) - retrying automatically"
+    if "inference 4" in m:
+        return "LLM rejected the request (HTTP 4xx) - check model config, retrying"
+    if "timeout" in m:
+        return "LLM timed out - retrying automatically"
+    return (msg or "unknown error")[:300]
+
+
 def _fail(job: ClassifierJob, msg: str) -> None:
     job.status = "error"
-    job.error = (msg or "")[:500]
+    job.error = _summarize_error(msg)
     job.retry_after = _now() + timedelta(seconds=RETRY_BACKOFF_SECS)
-    logger.warning("classifier job %s error: %s", job.id, job.error)
+    logger.warning("classifier job %s error: %s (raw: %s)", job.id, job.error, (msg or "")[:200])
 
 
 def _step_job(db) -> None:

@@ -111,7 +111,11 @@ class InferenceAdapter:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        with httpx.Client(timeout=self.settings.inference_timeout_seconds) as client:
+        # connect fast (a dead backend should fail in seconds, not hang the job
+        # thread), read long (a live but slow model grinding on a 25-track chunk
+        # can legitimately take a couple of minutes)
+        timeout = httpx.Timeout(self.settings.inference_timeout_seconds, connect=15)
+        with httpx.Client(timeout=timeout) as client:
             r = client.post(url, json=payload, headers=headers)
             if r.status_code >= 400:
                 raise RuntimeError(f"Inference {r.status_code}: {r.text[:500]}")

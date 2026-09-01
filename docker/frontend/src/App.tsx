@@ -18,9 +18,32 @@ import { api } from './api';
 
 export type TabName = 'home' | 'search' | 'generate' | 'runs' | 'tracks' | 'ai';
 
+// Tabs are reflected in the URL hash (#/search, #/tracks/4, ...) so refresh and
+// back/forward keep you where you were.
+const VALID_TABS: TabName[] = ['home', 'search', 'generate', 'ai', 'runs', 'tracks'];
+
+function parseHash(): { tab: TabName; tracksId: number | null } {
+  const h = window.location.hash.replace(/^#\/?/, '');
+  if (h === '' || h === 'home') return { tab: 'home', tracksId: null };
+  const [t, idPart] = h.split('/');
+  if (t === 'tracks') {
+    const id = idPart ? Number(idPart) : null;
+    if (id === null || (Number.isInteger(id) && id > 0)) return { tab: 'tracks', tracksId: id };
+  } else if ((VALID_TABS as string[]).includes(t)) {
+    return { tab: t as TabName, tracksId: null };
+  }
+  return { tab: 'home', tracksId: null };
+}
+
+function hashFor(tab: TabName, tracksId: number | null): string {
+  if (tab === 'tracks' && tracksId) return `#/tracks/${tracksId}`;
+  if (tab === 'home') return '#/';
+  return `#/${tab}`;
+}
+
 export default function App() {
-  const [tab, setTab] = useState<TabName>('home');
-  const [tracksId, setTracksId] = useState<number | null>(null);
+  const [tab, setTabState] = useState<TabName>(() => parseHash().tab);
+  const [tracksId, setTracksId] = useState<number | null>(() => parseHash().tracksId);
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [display, setDisplay] = useState('');
   const [authUrl, setAuthUrl] = useState('');
@@ -51,7 +74,8 @@ export default function App() {
     if (err) setOauthMsg('Spotify connection failed: ' + err);
     else if (p.get('spotify') === 'connected') setOauthMsg('Connected to Spotify!');
     if (window.history && window.history.replaceState) {
-      window.history.replaceState({}, '', window.location.pathname);
+      // strip the OAuth query params but KEEP the hash (tab routing lives there)
+      window.history.replaceState({}, '', window.location.pathname + window.location.hash);
     }
     refreshAuth();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -71,6 +95,31 @@ export default function App() {
       clearInterval(iv);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Tab change: state only. The effect below is the single hash writer, so a
+  // tab change can never produce two (or a spurious) history entry.
+  const setTab = (t: TabName, tid: number | null = tracksId) => {
+    setTabState(t);
+    setTracksId(tid);
+  };
+
+  // Hash <-> state sync. One writer: whenever state changes, make the URL hash
+  // match (this also covers the tracks page changing playlist in place).
+  useEffect(() => {
+    const want = hashFor(tab, tab === 'tracks' ? tracksId : null);
+    if (window.location.hash !== want) window.location.hash = want;
+  }, [tab, tracksId]);
+
+  // Browser back/forward or a manual hash edit (e.g. pasted link) -> state.
+  useEffect(() => {
+    const onHash = () => {
+      const p = parseHash();
+      setTabState(p.tab);
+      if (p.tab === 'tracks') setTracksId(p.tracksId);
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
   const tabs: TabName[] = ['home', 'search', 'generate', 'ai', 'runs', 'tracks'];
@@ -94,14 +143,14 @@ export default function App() {
             <Chip label={display || 'Connected'} color="success" />
           )}
         </Toolbar>
-        <Tabs value={tabs.indexOf(tab)} onChange={(_, v) => setTab(tabs[v])} textColor="inherit">
+        <Tabs value={tabs.indexOf(tab)} onChange={(_, v: number) => { const t = tabs[v]; if (t && t !== tab) setTab(t); }} textColor="inherit">
           {tabs.map((t) => (
-            <Tab key={t} label={t[0].toUpperCase() + t.slice(1)} value={t} onClick={() => setTab(t)} />
+            <Tab key={t} label={t[0].toUpperCase() + t.slice(1)} />
           ))}
         </Tabs>
       </AppBar>
       <Container maxWidth="xl" sx={{ flexGrow: 1, py: 3 }}>
-        {tab === 'home' && <Home onOpenTracks={(id) => { setTracksId(id); setTab('tracks'); }} authUrl={authUrl} onAuthed={setAuthed} configured={configured} onRefresh={refreshAuth} authed={!!authed} display={display} oauthMsg={oauthMsg} />}
+        {tab === 'home' && <Home onOpenTracks={(id) => { setTracksId(id); setTab('tracks', id); }} authUrl={authUrl} onAuthed={setAuthed} configured={configured} onRefresh={refreshAuth} authed={!!authed} display={display} oauthMsg={oauthMsg} />}
         {tab === 'search' && <Search authed={!!authed} />}
         {tab === 'generate' && <Generate authed={!!authed} />}
         {tab === 'ai' && <Classifiers />}
