@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func
 from ..db import get_db, SessionLocal
-from ..models import User, Playlist, Track, ClassificationRun
+from ..models import User, Playlist, Track, ClassificationRun, Classifier, TrackClassification
 from ..config import get_settings
 from ..spotify.auth import authorize_redirect_url, authenticate_code
 from ..spotify.download import current_spotify, sync_playlists
@@ -16,9 +16,11 @@ from pydantic import BaseModel
 from ..inference.runner import run_classification
 from ..inference.adapter import JSON_SCHEMA as LLM_SCHEMA
 from .schemas import *
-from .search import run_search
+from .search import run_search, classifications_map
+from .classifiers import router as classifier_router  # noqa: F401
 
 api_router = APIRouter()
+api_router.include_router(classifier_router)
 settings = get_settings()
 
 
@@ -160,7 +162,8 @@ def list_tracks(pl_id: int):
     db = SessionLocal()
     try:
         rows = db.query(Track).filter_by(playlist_id=pl_id).order_by(Track.playlist_track_index).all()
-        return [track_to_out(r) for r in rows]
+        cls_map = classifications_map(db, [t.id for t in rows])
+        return [track_to_out(r, cls_map.get(r.id)) for r in rows]
     finally:
         db.close()
 
@@ -197,8 +200,10 @@ def get_runs():
         db.close()
 
 
-def track_to_out(t):
-    return TrackOut.model_validate(t)
+def track_to_out(t, classifications: dict | None = None):
+    out = TrackOut.model_validate(t)
+    out.classifications = classifications or {}
+    return out
 
 def run_to_out(r):
     return ClassificationRunOut.model_validate(r)

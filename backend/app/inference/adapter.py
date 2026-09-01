@@ -106,24 +106,55 @@ class InferenceAdapter:
         self.api_key = self.settings.inference_api_key or None
         self.model = self.settings.inference_model
 
-    def chat(self, messages: list[dict]):
+    def _post_chat(self, payload: dict) -> str:
         url = self.base_url + "/chat/completions"
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": 0,
-            "response_format": {"type": "json_object"},
-        }
         with httpx.Client(timeout=self.settings.inference_timeout_seconds) as client:
             r = client.post(url, json=payload, headers=headers)
             if r.status_code >= 400:
                 raise RuntimeError(f"Inference {r.status_code}: {r.text[:500]}")
             data = r.json()
             content = data["choices"][0]["message"]["content"]
+            if not content or not content.strip():
+                raise RuntimeError("Inference returned empty content")
             return content
+
+    def chat(self, messages: list[dict]):
+        return self._post_chat({
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0,
+            "response_format": {"type": "json_object"},
+        })
+
+    def chat_structured(self, messages: list[dict], json_schema: dict) -> str:
+        """Chat with a strict JSON schema attached to the request.
+
+        Sends response_format json_schema when the provider honors it; if the
+        proxy/model rejects it (400), retries once with plain json_object —
+        the schema is also embedded in the system prompt by the caller, so
+        the answer is still expected to conform (and IS validated on the way
+        in). Returns the raw content string."""
+        base = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0,
+        }
+        try:
+            return self._post_chat({**base, "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "classifier_response",
+                    "strict": True,
+                    "schema": json_schema,
+                },
+            }})
+        except RuntimeError as e:
+            if "Inference 400" not in str(e):
+                raise
+            return self._post_chat({**base, "response_format": {"type": "json_object"}})
 
     def classify(self, artists: list[str], album: str, title: str,
                  year: str, genres: list[str]) -> ClassificationResult:

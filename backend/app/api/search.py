@@ -1,9 +1,10 @@
 from __future__ import annotations
 import json
 import re
-from sqlalchemy import func
+from sqlalchemy import func, and_
+from sqlalchemy.orm import aliased
 from ..db import SessionLocal
-from ..models import Track
+from ..models import Track, Classifier, TrackClassification
 from ..inference.adapter import InferenceAdapter
 from .schemas import SearchQuery
 
@@ -28,7 +29,7 @@ def _as_list(v) -> list:
     return list(v or [])
 
 
-def _to_out(t: Track, reason: str = "") -> dict:
+def _to_out(t: Track, reason: str = "", classifications: dict | None = None) -> dict:
     return {
         "id": t.id,
         "spotify_track_id": t.spotify_track_id,
@@ -41,7 +42,32 @@ def _to_out(t: Track, reason: str = "") -> dict:
         "external_url": t.external_url or "",
         "language": t.language or "",
         "match_reason": reason,
+        "classifications": classifications or {},
     }
+
+
+def classifications_map(db, track_ids) -> dict:
+    """{track_id: {classifier_id_str: {value, stale, reason}}} for the given ids."""
+    if not track_ids:
+        return {}
+    cls_rows = db.query(Classifier).all()
+    if not cls_rows:
+        return {}
+    rev = {c.id: c.revision for c in cls_rows}
+    out: dict = {}
+    rows = (db.query(TrackClassification)
+            .filter(TrackClassification.track_id.in_(track_ids))
+            .filter(TrackClassification.classifier_id.in_([c.id for c in cls_rows])).all())
+    for r in rows:
+        try:
+            v = json.loads(r.value)
+        except (json.JSONDecodeError, TypeError):
+            v = None
+        out.setdefault(r.track_id, {})[str(r.classifier_id)] = {
+            "value": v, "stale": r.classifier_revision != rev.get(r.classifier_id),
+            "reason": r.reason or "",
+        }
+    return out
 
 
 def _keyword_score(query: str, s: dict) -> float:
@@ -88,11 +114,32 @@ def run_search(q: SearchQuery) -> dict:
             stmt = stmt.filter(func.substr(Track.release_date, 1, 4) <= f"{q.max_year:04d}")
         if q.language:
             stmt = stmt.filter(Track.language == q.language)
+        # AI-classifier filters: join the pre-computed values (instant, no LLM)
+        for cid_raw, val in (q.classifier_filters or {}).items():
+            try:
+                cid = int(cid_raw)
+            except (TypeError, ValueError):
+                continue
+            cls = db.get(Classifier, cid)
+            if cls is None:
+                continue
+            alias = aliased(TrackClassification)
+            cond = (and_(alias.track_id == Track.id,
+                         alias.classifier_id == cls.id,
+                         alias.classifier_revision == cls.revision))
+            if isinstance(val, bool) or (isinstance(val, (int, float)) and not isinstance(val, bool)):
+                cond = and_(cond, alias.value == json.dumps(val))  # boolean/number: exact
+            else:
+                cond = and_(cond, alias.value.ilike(f"%{val}%"))  # string: contains
+            stmt = stmt.join(alias, cond)
         candidates = stmt.order_by(Track.playlist_id, Track.playlist_track_index).all()
 
         query = (q.q or "").strip()
         if not query:
             rows = [_to_out(t) for t in candidates[: q.limit]]
+            cmaps = classifications_map(db, [r["id"] for r in rows])
+            for r in rows:
+                r["classifications"] = cmaps.get(r["id"], {})
             return {"total": total, "count": len(rows), "semantic": "off",
                     "query": "", "tracks": rows}
 
@@ -130,6 +177,9 @@ def run_search(q: SearchQuery) -> dict:
             scored = [x for x in scored if x[0] > 0]
         scored.sort(key=lambda x: (-x[0], x[1].playlist_id, x[1].playlist_track_index))
         rows = [_to_out(t, reason) for (s, t, reason) in scored[: q.limit]]
+        cmaps = classifications_map(db, [r["id"] for r in rows])
+        for r in rows:
+            r["classifications"] = cmaps.get(r["id"], {})
         return {"total": total, "count": len(rows), "semantic": mode,
                 "query": query, "tracks": rows}
     finally:

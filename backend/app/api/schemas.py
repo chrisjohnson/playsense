@@ -36,6 +36,8 @@ class TrackOut(BaseModel):
     genres: Any = []
     classification_strategy: str = ""
     run_id: Optional[int] = None
+    # AI-classifier values: {"<classifier_id>": {"value": <json>, "stale": bool, "reason": str}}
+    classifications: dict = {}
 
     model_config = {"from_attributes": True}
 
@@ -86,6 +88,9 @@ class SearchQuery(BaseModel):
     language: Optional[str] = None
     use_semantic: bool = True
     limit: int = 500
+    # AI-classifier filters: {"<classifier_id>": <expected value>}
+    # boolean: true/false (exact) | string: contains | number/datetime: exact
+    classifier_filters: Optional[dict] = None
 
 
 class GeneratePlaylistIn(BaseModel):

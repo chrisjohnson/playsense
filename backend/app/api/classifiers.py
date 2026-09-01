@@ -1,0 +1,322 @@
+from __future__ import annotations
+
+import json
+from datetime import datetime
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from sqlalchemy import func
+
+from ..db import SessionLocal
+from ..models import Track, Classifier, TrackClassification
+from ..inference.adapter import InferenceAdapter
+
+router = APIRouter(prefix="/classifiers", tags=["classifiers"])
+
+FIELD_TYPES = ("boolean", "string", "number", "datetime")
+CHUNK_SIZE = 25  # tracks per LLM call - keeps prompts small (see design doc §4)
+
+
+class ClassifierIn(BaseModel):
+    name: str
+    query: str
+    field_type: str | None = None  # omitted -> infer via a 1st-pass LLM call
+
+
+class ClassifierUpdate(BaseModel):
+    name: str | None = None
+    query: str | None = None
+    field_type: str | None = None
+
+
+class RunIn(BaseModel):
+    playlist_id: int | None = None
+    limit: int = 100  # bounded pass (MVP: synchronous; the job manager reuses this core)
+    offset: int = 0
+
+
+# ---------------------------------------------------------------------------
+# value handling (loose JSON storage, strict validation at write time)
+# ---------------------------------------------------------------------------
+
+
+def validate_value(field_type: str | None, v):
+    """Coerce+validate a raw LLM value for the classifier's field type.
+    Returns (ok, normalized_json_text)."""
+    if field_type is None:
+        return False, None
+    if field_type == "boolean":
+        if isinstance(v, bool):
+            return True, json.dumps(v)
+        if isinstance(v, int) and v in (0, 1):
+            return True, json.dumps(bool(v))
+        if isinstance(v, str) and v.strip().lower() in ("true", "false"):
+            return True, json.dumps(v.strip().lower() == "true")
+        return False, None
+    if field_type == "string":
+        if isinstance(v, str) and v.strip():
+            return True, json.dumps(v.strip())
+        return False, None
+    if field_type == "number":
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return True, json.dumps(v)
+        return False, None
+    if field_type == "datetime":
+        if isinstance(v, str):
+            try:
+                datetime.fromisoformat(v.replace("Z", "+00:00"))
+                return True, json.dumps(v)
+            except ValueError:
+                return False, None
+        return False, None
+    return False, None
+
+
+def schema_for(field_type: str | None) -> dict:
+    """The per-track value schema the LLM must conform to."""
+    vt = {
+        "boolean": {"type": "boolean"},
+        "string": {"type": "string"},
+        "number": {"type": "number"},
+        "datetime": {"type": "string", "description": "ISO 8601 date or datetime"},
+    }.get(field_type, {"type": "string"})
+    return {
+        "type": "object",
+        "properties": {
+            "results": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "index": {"type": "integer"},
+                        "value": vt,
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["index", "value"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["results"],
+        "additionalProperties": False,
+    }
+
+
+# ---------------------------------------------------------------------------
+# execution core (chunked batch pass) - reused by the future job manager
+# ---------------------------------------------------------------------------
+
+
+def _track_line(i: int, t: Track) -> str:
+    try:
+        artists = [a.get("name", "") for a in json.loads(t.artists or "[]")]
+    except (json.JSONDecodeError, AttributeError):
+        artists = []
+    dur_s = round(t.duration_ms / 1000) if t.duration_ms else None
+    return (f"{i}: title=\"{t.name}\" artists=[{', '.join(artists)}] "
+            f"album=\"{t.album_name or '?'}\" year={ (t.release_date or '?')[:4] } "
+            f"duration_s={dur_s} language={t.language or '?'}")
+
+
+def run_classifier_pass(cls: Classifier, playlist_id: int | None = None,
+                        limit: int = 100, offset: int = 0) -> dict:
+    """Classify up to `limit` tracks that lack a CURRENT value for this
+    classifier (stale = older revision counts as needing work). Synchronous
+    bounded pass; returns progress. Raises on LLM failure after the partial
+    work is committed (per-chunk upserts survive)."""
+    db = SessionLocal()
+    try:
+        if cls.field_type is None:
+            raise HTTPException(409, "Classifier has no field_type yet; infer or set it first.")
+        # Tracks needing work = tracks with NO current-revision row (a stale
+        # row simply gets upserted). Bump revision -> everything needs work.
+        stmt = db.query(Track)
+        if playlist_id is not None:
+            stmt = stmt.filter(Track.playlist_id == playlist_id)
+        current_ids = db.query(TrackClassification.track_id).filter(
+            TrackClassification.classifier_id == cls.id,
+            TrackClassification.classifier_revision == cls.revision)
+        stmt = stmt.filter(Track.id.notin_(current_ids))
+        tracks = stmt.order_by(Track.id).offset(offset).limit(limit).all()
+
+        llm = InferenceAdapter()
+        schema = schema_for(cls.field_type)
+        system = (
+            "You are a strict metadata classifier. You receive one classification question "
+            "and a numbered list of music tracks. For EACH track, decide its value for the "
+            "question using only the metadata shown. Respond with JSON matching EXACTLY this "
+            "schema:\n" + json.dumps(schema, indent=1) +
+            "\nRules: include one entry per track index, never skip an index; the value type "
+            "must match the schema; keep 'reason' to one short clause; if the metadata is "
+            "inconclusive, still answer your best judgment."
+        )
+
+        done = ok = failed = 0
+        for i in range(0, len(tracks), CHUNK_SIZE):
+            chunk = tracks[i:i + CHUNK_SIZE]
+            lines = "\n".join(_track_line(j, t) for j, t in enumerate(chunk))
+            user = f"Classification question: {cls.query}\n\nTracks:\n{lines}"
+            content = llm.chat_structured([
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ], schema)
+            data = json.loads(content)
+            entries = {e.get("index"): e for e in (data.get("results") or []) if isinstance(e, dict)}
+            for j, t in enumerate(chunk):
+                done += 1
+                e = entries.get(j)
+                if e is None:
+                    failed += 1
+                    continue
+                good, val_json = validate_value(cls.field_type, e.get("value"))
+                if not good:
+                    failed += 1
+                    continue
+                row = db.query(TrackClassification).filter_by(
+                    track_id=t.id, classifier_id=cls.id).first()
+                if row is None:
+                    row = TrackClassification(track_id=t.id, classifier_id=cls.id)
+                    db.add(row)
+                row.classifier_revision = cls.revision
+                row.value = val_json
+                row.reason = str(e.get("reason") or "")[:300]
+                row.classified_at = datetime.utcnow()
+                ok += 1
+            db.commit()  # per-chunk commit: partial work survives LLM failures
+        return {"requested": limit, "processed": len(tracks), "classified": ok,
+                "failed": failed, "done": done}
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# API
+# ---------------------------------------------------------------------------
+
+
+def _classifier_out(c: Classifier, total: int) -> dict:
+    db = SessionLocal()
+    try:
+        current = db.query(func.count(TrackClassification.id)).filter(
+            TrackClassification.classifier_id == c.id,
+            TrackClassification.classifier_revision == c.revision).scalar() or 0
+        stale = db.query(func.count(TrackClassification.id)).filter(
+            TrackClassification.classifier_id == c.id,
+            TrackClassification.classifier_revision != c.revision).scalar() or 0
+    finally:
+        db.close()
+    return {
+        "id": c.id, "name": c.name, "query": c.query, "field_type": c.field_type,
+        "revision": c.revision, "created_at": c.created_at, "updated_at": c.updated_at,
+        "stats": {"total": total, "current": current, "stale": stale,
+                  "unclassified": max(0, total - current - stale)},
+    }
+
+
+@router.get("")
+def list_classifiers():
+    db = SessionLocal()
+    try:
+        total = db.query(func.count(Track.id)).scalar() or 0
+        rows = db.query(Classifier).order_by(Classifier.id).all()
+        return [_classifier_out(c, total) for c in rows]
+    finally:
+        db.close()
+
+
+@router.post("")
+def create_classifier(body: ClassifierIn):
+    if body.field_type is not None and body.field_type not in FIELD_TYPES:
+        raise HTTPException(422, f"field_type must be one of {list(FIELD_TYPES)}")
+    field_type = body.field_type
+    inferred = False
+    if field_type is None:
+        # 1st-pass LLM call: what kind of value does this question produce?
+        try:
+            llm = InferenceAdapter()
+            content = llm.chat_structured([
+                {"role": "system", "content": (
+                    "You decide the answer type for a track-classification question. "
+                    "Respond with JSON: {\"field_type\": <one of: boolean, string, number, datetime>, "
+                    "\"reason\": \"short\"}. boolean = yes/no per track; string = a label/phrase; "
+                    "number = a numeric score; datetime = a date.")},
+                {"role": "user", "content": f"Question: {body.query}"},
+            ], {"type": "object", "properties": {"field_type": {"type": "string"}, "reason": {"type": "string"}}})
+            ft = (json.loads(content).get("field_type") or "").strip().lower()
+            if ft in FIELD_TYPES:
+                field_type, inferred = ft, True
+        except Exception:
+            pass  # inference failed -> field stays untyped (hidden in search) until set
+    db = SessionLocal()
+    try:
+        c = Classifier(name=body.name.strip()[:255], query=body.query.strip(),
+                       field_type=field_type, revision=1)
+        db.add(c)
+        db.commit()
+        db.refresh(c)
+        return {"classifier": _classifier_out(c, db.query(func.count(Track.id)).scalar() or 0),
+                "inferred": inferred}
+    finally:
+        db.close()
+
+
+@router.put("/{cid}")
+def update_classifier(cid: int, body: ClassifierUpdate):
+    db = SessionLocal()
+    try:
+        c = db.get(Classifier, cid)
+        if c is None:
+            raise HTTPException(404, "Classifier not found")
+        changed = False
+        if body.name is not None and body.name.strip() and body.name.strip() != c.name:
+            c.name = body.name.strip()[:255]
+        if body.query is not None and body.query.strip() and body.query.strip() != c.query:
+            c.query = body.query.strip()
+            changed = True  # redefinition -> every stored value becomes stale
+        if body.field_type is not None:
+            if body.field_type not in FIELD_TYPES:
+                raise HTTPException(422, f"field_type must be one of {list(FIELD_TYPES)}")
+            if body.field_type != c.field_type:
+                c.field_type = body.field_type
+                changed = True  # type change -> old values don't parse as the new type
+        if changed:
+            c.revision += 1
+            c.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(c)
+        return _classifier_out(c, db.query(func.count(Track.id)).scalar() or 0)
+    finally:
+        db.close()
+
+
+@router.delete("/{cid}")
+def delete_classifier(cid: int):
+    db = SessionLocal()
+    try:
+        c = db.get(Classifier, cid)
+        if c is None:
+            raise HTTPException(404, "Classifier not found")
+        db.delete(c)
+        db.commit()
+        return {"status": "deleted"}
+    finally:
+        db.close()
+
+
+@router.post("/{cid}/run")
+def run_classifier(cid: int, body: RunIn):
+    db = SessionLocal()
+    try:
+        c = db.get(Classifier, cid)
+        if c is None:
+            raise HTTPException(404, "Classifier not found")
+    finally:
+        db.close()
+    try:
+        return {"classifier_id": cid, **run_classifier_pass(c, body.playlist_id,
+                                                            max(1, body.limit), body.offset)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        # partial work is already committed per chunk; report what failed
+        raise HTTPException(502, f"Classifier run failed mid-pass: {str(e)[:300]}")

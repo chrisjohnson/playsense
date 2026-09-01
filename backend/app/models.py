@@ -96,6 +96,49 @@ class Track(Base):
     )
 
 
+class Classifier(Base):
+    """A named, versioned natural-language definition of a dynamic metadata
+    field (see docs/ai-classifiers.md). Editing query/field_type bumps
+    revision, which makes every stored value from an older revision stale."""
+
+    __tablename__ = "classifiers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    query = Column(Text, nullable=False)
+    field_type = Column(String(16), nullable=True)  # boolean|string|number|datetime (NULL until inferred)
+    revision = Column(Integer, default=1, nullable=False)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+    classifications = relationship("TrackClassification", back_populates="classifier",
+                                  cascade="all, delete-orphan")
+
+
+class TrackClassification(Base):
+    """One current (upserted) value per (track, classifier). Staleness is
+    derived: stale iff classifier_revision != classifier.revision or the
+    value doesn't parse as the classifier's current field_type."""
+
+    __tablename__ = "track_classifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    track_id = Column(Integer, ForeignKey("tracks.id"), nullable=False, index=True)
+    classifier_id = Column(Integer, ForeignKey("classifiers.id"), nullable=False, index=True)
+    classifier_revision = Column(Integer, nullable=False)
+    value = Column(Text, nullable=False)  # JSON: true | 3.5 | "x" | "2024-01-01T00:00:00Z"
+    reason = Column(Text, default="")
+    classified_at = Column(DateTime, default=utcnow)
+
+    track = relationship("Track")
+    classifier = relationship("Classifier", back_populates="classifications")
+
+    __table_args__ = (
+        Index("uq_track_classifier", "track_id", "classifier_id", unique=True),
+        Index("ix_tc_classifier_revision", "classifier_id", "classifier_revision"),
+    )
+
+
 class ClassificationRun(Base):
     __tablename__ = "classification_runs"
 

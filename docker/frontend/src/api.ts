@@ -24,6 +24,7 @@ export const api = {
   classify: (id: number, name: string, useSemantic: boolean) =>
     req(`/playlists/${id}/classify`, { method: 'POST', body: JSON.stringify({ name, use_semantic: useSemantic }) }),
   search: (q: any) => req('/search', { method: 'POST', body: JSON.stringify(q) }),
+  classifiers: () => req('/classifiers'),
   generate: (body: any) => req('/generate', { method: 'POST', body: JSON.stringify(body) }),
   runs: () => req('/runs'),
   saveCredentials: (client_id: string, client_secret: string) =>
@@ -49,6 +50,19 @@ export type Track = {
   genres?: any[];
   classification_strategy?: string;
   match_reason?: string;
+  // AI-classifier values: { "<classifier_id>": { value, stale, reason } }
+  classifications?: Record<string, { value: any; stale: boolean; reason: string }>;
+};
+
+export type Classifier = {
+  id: number;
+  name: string;
+  query: string;
+  field_type: 'boolean' | 'string' | 'number' | 'datetime' | null;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+  stats?: { total: number; current: number; stale: number; unclassified: number };
 };
 
 export type SearchResponse = {

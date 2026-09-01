@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Minimal OpenAI-compatible mock LLM for local development.
 
-Lets the full LLM paths (InferenceAdapter.relevance_batch -> search.run_search
-and InferenceAdapter.classify -> ClassificationEngine) be exercised without a
-real model. It answers deterministically with keyword/token-based logic in the
+Lets the full LLM paths (InferenceAdapter.relevance_batch -> search.run_search,
+InferenceAdapter.classify -> ClassificationEngine, and the new classifier
+batch format used by app/api/classifiers.py) be exercised without a real
+model. It answers deterministically with keyword/token-based logic in the
 exact JSON shapes the adapter expects, so parsing/filtering/sorting/render are
 genuinely covered.
 
@@ -65,6 +66,35 @@ def answer_relevance(user: str) -> dict:
     return {"results": results}
 
 
+CLASS_LINE_RE = re.compile(
+    r'^(\d+): title="(.*)" artists=\[(.*?)\] album="(.*)" year=(\S+)', re.M)
+MEXICAN_ARTISTS = ["a. banderas", "banderas", "chalino sanchez", "chalino",
+                   "jorge alexis", "los lobos"]
+
+
+def answer_classifier(user: str) -> dict:
+    """New classifier format: 'Classification question: ...' + numbered tracks.
+    Deterministic mock: boolean true when a MEXICAN signal token or a known
+    Mexican artist appears in title/artists/album."""
+    m = re.search(r"^Classification question:\s*(.+)$", user, re.M)
+    question = (m.group(1).lower() if m else "")
+    # The mock only genuinely understands mexican-ish questions; for any other
+    # question it answers false with a reason so the pipeline is still covered.
+    mex_q = "mexican" in question
+    results = []
+    for i, title, artists, album, _year in CLASS_LINE_RE.findall(user):
+        hay = f"{title} {artists} {album}".lower()
+        toks = set(_WORD_RE.findall(hay))
+        sig = [s for s in MEXICAN if _match(hay, toks, s)]
+        art = [s for s in MEXICAN_ARTISTS if s in hay]
+        is_mex = bool(sig or art)
+        value = is_mex if mex_q else False
+        why = ("mock token match: " + ", ".join((sig + art)[:3])) if (sig or art) \
+            else ("no mock token signal" if mex_q else "mock: unknown question -> false")
+        results.append({"index": int(i), "value": value, "reason": why})
+    return {"results": results}
+
+
 def answer_classification(user: str) -> dict:
     def field(name):
         m = re.search(rf"^{name}:\s*(.+)$", user, re.M)
@@ -120,6 +150,11 @@ class Handler(BaseHTTPRequestHandler):
                      if m.get("role") == "user"), "")
         if user.startswith("Query:"):
             obj = answer_relevance(user)
+        elif "Classification question:" in user:
+            obj = answer_classifier(user)
+        elif user.startswith("Question:"):
+            # 1st-pass field-type inference prompt
+            obj = {"field_type": "boolean", "reason": "mock: yes/no question"}
         elif "Artist names:" in user:
             obj = answer_classification(user)
         else:
