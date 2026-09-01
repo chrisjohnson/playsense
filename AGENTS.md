@@ -116,9 +116,14 @@ full. Design around them, do not fight them:
 ## 6. LLM inference (semantic search / classification)
 
 - The api container reads inference settings from the git-ignored `.env` in the
-  repo root (NEVER commit it; it holds the LiteLLM API key). Start api with
-  `--env-file <repo-host-path>/.env`. Settings: INFERENCE_BASE_URL,
-  INFERENCE_MODEL (medium-moe), INFERENCE_API_KEY.
+  repo root (NEVER commit it; it holds the LiteLLM API key). Settings:
+  INFERENCE_BASE_URL, INFERENCE_MODEL (medium-moe), INFERENCE_API_KEY. Start
+  api with `--env-file` IF the docker CLI can see the file - from an agent
+  container it CANNOT: --env-file is read client-side and the host path does
+  not exist in the agent's filesystem. Working pattern: source the .env in
+  your own shell (it IS visible at your workspace path) and pass bare
+  `-e INFERENCE_BASE_URL -e INFERENCE_MODEL -e INFERENCE_API_KEY` (values
+  come from the shell env and never touch the command line).
 - LiteLLM proxy runs on the HOST's 127.0.0.1:4000 (host networking, not
   reachable from containers). The `litellm-fwd` container (socat, host
   networking, binds 172.17.0.1:4001 -> 127.0.0.1:4000) exposes it to the docker
