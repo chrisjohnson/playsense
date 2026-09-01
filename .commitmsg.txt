@@ -1,0 +1,31 @@
+Rework downloads as a quota-aware background worker for the 2026 Spotify API
+
+Spotify's dev-mode changes (Feb 2026 + Jul 2026) made large playlist downloads
+hit a perpetual 429: quota is now counted per developer account (not per
+Client ID), the playlist-items page cap dropped from 100 to 50 (new
+GET /playlists/{id}/tracks endpoint), and the batch endpoints
+(/tracks?ids=, /audio-features?ids=, ...) are gone in dev mode. 429s now
+carry a reason field (QUOTA_EXCEEDED vs rolling-window rate limit).
+
+Changes:
+- client.py: shared rolling-30s Pacer (default 8 req/30s, degrades on
+  rate-limit 429s, recovers when clean); 429s classified by reason -
+  QUOTA_EXCEEDED raises SpotifyQuotaExceeded (no hot-loop retries).
+- download.py: uses the new /tracks endpoint (limit 50, legacy /items
+  fallback); resume via max(playlist_track_index)+1 (duplicate-safe);
+  audio-features phase removed from the default path (endpoint unavailable
+  in dev mode); per-page commit keeps progress.
+- worker.py (new): background worker enqueued from
+  POST /playlists/{id}/download; grinds page by page, pauses on
+  QUOTA_EXCEEDED and probes again after 15 min, survives restarts
+  (re-queues in-flight downloads at startup).
+- models/router/main: download progress columns on playlists
+  (state/saved/total/error/updated_at) exposed via GET /playlists; worker
+  started in app lifespan.
+- frontend: cards show live download progress, waiting-for-quota, and
+  error states; auto-polls every 5s while active.
+- AGENTS.md: documents the post-2026 quota reality.
+
+Also: the api container now runs with the host data/ bind mount so the DB
+(tokens + progress) survives container recreation - the previous setup lost
+all state when the container was removed.

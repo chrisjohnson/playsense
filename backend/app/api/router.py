@@ -8,9 +8,10 @@ from ..db import get_db, SessionLocal
 from ..models import User, Playlist, Track, ClassificationRun
 from ..config import get_settings
 from ..spotify.auth import authorize_redirect_url, authenticate_code
-from ..spotify.download import download_playlist, sync_playlists
+from ..spotify.download import current_spotify, sync_playlists
 from ..spotify.client import SpotifyAPI
 from ..spotify import credentials
+from ..spotify.worker import enqueue as enqueue_download
 from pydantic import BaseModel
 from ..inference.runner import run_classification
 from ..inference.adapter import JSON_SCHEMA as LLM_SCHEMA
@@ -21,28 +22,11 @@ api_router = APIRouter()
 settings = get_settings()
 
 
-def current_spotify():
-    db = SessionLocal()
-    try:
-        u = db.query(User).first()
-        if not u:
-            raise RuntimeError("not authenticated")
-        def saver(access_token, refresh_token, expires_at):
-            # Persist the rotated tokens in a fresh session (the outer one is still open).
-            sdb = SessionLocal()
-            try:
-                uu = sdb.get(User, u.id)
-                if uu is not None:
-                    uu.access_token = access_token
-                    if refresh_token:
-                        uu.refresh_token = refresh_token
-                    uu.token_expires_at = expires_at
-                    sdb.commit()
-            finally:
-                sdb.close()
-        return SpotifyAPI(u.access_token, refresh=u.refresh_token, expires_at=u.token_expires_at, token_saver=saver)
-    finally:
-        db.close()
+def _current_spotify_strict():
+    api = current_spotify()
+    if api is None:
+        raise HTTPException(status_code=401, detail="Not authenticated. Connect to Spotify first.")
+    return api
 
 
 @api_router.get("/oauth/authorize")
@@ -113,17 +97,19 @@ def get_playlists(limit: int = Query(50)):
         return [{"id": p.id, "spotify_playlist_id": p.spotify_playlist_id, "name": p.name,
                  "description": p.description, "owner_id": p.owner_id, "is_public": p.is_public,
                  "external_url": p.external_url, "fetched_at": p.fetched_at,
-                 "track_count": cnt.get(p.id, 0)} for p in rows]
+                 "track_count": cnt.get(p.id, 0),
+                 "download_state": p.download_state or "idle",
+                 "download_saved": p.download_saved or 0,
+                 "download_total": p.download_total or 0,
+                 "download_error": p.download_error or "",
+                 "download_updated_at": p.download_updated_at} for p in rows]
     finally:
         db.close()
 
 
 @api_router.post("/playlists/sync")
 def sync_playlists_endpoint():
-    try:
-        api = current_spotify()
-    except Exception:
-        raise HTTPException(status_code=401, detail="Not authenticated. Connect to Spotify first.")
+    api = _current_spotify_strict()
     try:
         pls = sync_playlists(api)
         return {"status": "ok", "count": len(pls), "playlists": [
@@ -137,12 +123,25 @@ def sync_playlists_endpoint():
 
 @api_router.post("/playlists/{pl_id}/download")
 def download(pl_id: int):
+    """Enqueue the playlist for the background download worker.
+
+    The worker grinds page by page across Spotify quota windows; progress is
+    visible on GET /playlists (download_* fields) and survives restarts.
+    """
+    db = SessionLocal()
     try:
-        api = current_spotify()
-        n = download_playlist(api, pl_id)
-        return {"status": "ok", "downloaded": n}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        pl = db.get(Playlist, pl_id)
+        if pl is None:
+            raise HTTPException(status_code=404, detail="playlist not found")
+        if pl.download_state not in ("queued", "downloading", "waiting_quota"):
+            pl.download_state = "queued"
+            pl.download_error = ""
+            db.commit()
+            enqueue_download(pl.id)
+        return {"status": "ok", "state": pl.download_state,
+                "saved": pl.download_saved or 0, "total": pl.download_total or 0}
+    finally:
+        db.close()
 
 
 @api_router.post("/playlists/{pl_id}/classify")

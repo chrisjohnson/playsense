@@ -63,4 +63,9 @@ export type PlaylistItem = {
   external_url: string;
   fetched_at: string;
   track_count: number;
+  download_state?: 'idle' | 'queued' | 'downloading' | 'waiting_quota' | 'done' | 'error';
+  download_saved?: number;
+  download_total?: number;
+  download_error?: string;
+  download_updated_at?: string;
 };

@@ -37,6 +37,13 @@ class Playlist(Base):
     fetched_at = Column(DateTime, default=utcnow)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
+    # Background download progress (the worker grinds across quota windows)
+    download_state = Column(String(32), default="idle")  # idle|queued|downloading|waiting_quota|done|error
+    download_saved = Column(Integer, default=0)
+    download_total = Column(Integer, default=0)
+    download_error = Column(String(1024), default="")
+    download_updated_at = Column(DateTime, nullable=True)
+
     user = relationship("User", back_populates="playlists")
     tracks = relationship("Track", back_populates="playlist", cascade="all, delete-orphan")
 

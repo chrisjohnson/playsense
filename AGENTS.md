@@ -72,3 +72,38 @@ Never ship a change without verifying. Prefer the running container.
 - No local LLM endpoint is reachable by default (Ollama on host.docker.internal:11434
   is often absent). The semantic/LLM path is UNTESTABLE here - only the structured and
   keyword heuristic paths are. Make sure code degrades gracefully when inference fails.
+
+## 5. Spotify API / quota reality (post-Feb+Jul 2026 dev-mode changes)
+
+The app runs as a DEVELOPMENT-MODE app; these limits are hard and not published in
+full. Design around them, do not fight them:
+
+- **Quota is per DEVELOPER ACCOUNT** (since Jul 2026). Multiple Client IDs share one
+  quota pool - creating a new app does NOT get you a fresh budget.
+- **429 has two kinds** (body: `{"error":{"status":429,"reason":...}}`):
+  - `reason: QUOTA_EXCEEDED` - the account's quota budget is gone. Waiting seconds
+    helps nothing; the window resets on a long (typically ~daily) schedule. The
+    download worker (`backend/app/spotify/worker.py`) pauses and probes later.
+  - Otherwise - rolling 30s rate limit. `client.py`'s Pacer paces requests
+    (default 8/30s, degrades on 429, recovers when clean) and retries with
+    Retry-After.
+- **Feb 2026 endpoint changes (dev mode)**:
+  - Batch endpoints are GONE: `/tracks?ids=`, `/albums?ids=`, `/artists?ids=`,
+    `/audio-features?ids=`, etc. Fetch individually (the download worker skips
+    audio features entirely).
+  - Playlist items: `GET /playlists/{id}/tracks` (NEW; page limit max **50**,
+    was 100). Old `/items` is deprecated (kept as fallback in download.py).
+  - Search `limit` max dropped 50 -> 10. `popularity` field removed. `/me` no
+    longer returns email/country. Other users' playlists/profiles: metadata only.
+  - Dev mode requires the app owner to have Premium; <=5 authorized users per app.
+- **Downloads are background work**: POST /playlists/{id}/download ENQUEUES; the
+  worker grinds page-by-page, commits per page, and progress (download_* columns
+  on playlists) survives container restarts. A 5000-track playlist needs ~100
+  page requests - that can legitimately span multiple quota windows. NEVER make
+  the download endpoint synchronous for large playlists.
+- The DB (data/spotify_tracker.db) holds the OAuth tokens AND download progress.
+  The api container MUST keep the host bind mount on /data (host path:
+  $HOST_WORK_DIR equivalent of this repo's data/ - see the container's mounts,
+  `docker inspect api`); the old failure mode was running api without it, losing
+  tokens+progress when the container was recreated. Refresh tokens also expire
+  after ~6 months: user must click Connect again.

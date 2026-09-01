@@ -1,20 +1,53 @@
 import json
+import logging
 from datetime import datetime, timezone
+
 from ..db import SessionLocal
 from ..models import User, Playlist, Track
-from .auth import save_user_from_token
 from .client import SpotifyAPI
+
+logger = logging.getLogger(__name__)
+
+# Feb-2026 dev-mode API: playlist items moved to /playlists/{id}/tracks with a
+# page limit capped at 50 (the old /items endpoint is deprecated). We prefer
+# the new endpoint and fall back to the legacy one if it 404s.
+_TRACKS_ENDPOINTS = [
+    ("/playlists/{sid}/tracks", 50),
+    ("/playlists/{sid}/items", 50),
+]
+_endpoint_cache: dict[str, tuple] = {}
 
 
 def get_or_create_api():
+    """Build a SpotifyAPI for the connected user, persisting rotated tokens."""
     db = SessionLocal()
     try:
         user = db.query(User).first()
         if not user:
             return None
-        return SpotifyAPI(user.access_token, refresh=user.refresh_token, expires_at=user.token_expires_at)
+
+        def saver(access_token, refresh_token, expires_at):
+            # Persist rotated tokens in a fresh session (the outer one is open).
+            sdb = SessionLocal()
+            try:
+                uu = sdb.get(User, user.id)
+                if uu is not None:
+                    uu.access_token = access_token
+                    if refresh_token:
+                        uu.refresh_token = refresh_token
+                    uu.token_expires_at = expires_at
+                    sdb.commit()
+            finally:
+                sdb.close()
+
+        return SpotifyAPI(user.access_token, refresh=user.refresh_token,
+                          expires_at=user.token_expires_at, token_saver=saver)
     finally:
         db.close()
+
+
+# Kept name used by the router (identical behavior).
+current_spotify = get_or_create_api
 
 
 def list_playlists(api: SpotifyAPI, limit: int = 50):
@@ -67,17 +100,65 @@ def sync_playlists(api: SpotifyAPI, max_playlists: int = 200) -> list:
     return pls
 
 
+def _resolve_endpoint(api: SpotifyAPI, sid: str) -> tuple:
+    """Pick a working playlist-items endpoint (new /tracks, legacy /items fallback).
+
+    The probe costs one API request; the choice is cached per playlist.
+    """
+    if sid in _endpoint_cache:
+        return _endpoint_cache[sid]
+    last_err = None
+    for path_tmpl, limit in _TRACKS_ENDPOINTS:
+        try:
+            api.get(path_tmpl.format(sid=sid), params={"limit": limit, "offset": 0})
+            _endpoint_cache[sid] = (path_tmpl, limit)
+            return path_tmpl, limit
+        except RuntimeError as e:
+            s = str(e)
+            if any(c in s for c in (" 404", " 405", " 410")):
+                last_err = e
+                continue
+            raise
+    raise RuntimeError(f"No working playlist-items endpoint for {sid}: {last_err}")
+
+
+def _set_progress(db, pl: Playlist, state: str, saved: int | None = None,
+                  total: int | None = None, error: str = ""):
+    pl.download_state = state
+    if saved is not None:
+        pl.download_saved = saved
+    if total is not None:
+        pl.download_total = total
+    pl.download_error = (error or "")[:1000]
+    pl.download_updated_at = datetime.now(timezone.utc)
+    db.commit()
+
+
+def _saved_progress(db, pl: Playlist) -> tuple:
+    """Return (rows_for_playlist, resume_offset).
+
+    Resume offset is max(playlist_track_index)+1, which is correct even when
+    the playlist contains duplicates (a duplicate reuses the same Track row
+    and the count then undercounts the offset).
+    """
+    rows = db.query(Track).filter(Track.playlist_id == pl.id).all()
+    if not rows:
+        return 0, 0
+    return len(rows), max(r.playlist_track_index for r in rows) + 1
+
+
 def _batch_audio_features(api: SpotifyAPI, ids):
+    """Batch audio features — only available to extended-quota apps; dev-mode
+    apps get 403/404 (the batch endpoint was removed in the Feb-2026 changes).
+    Keep for the future; the worker does not call this by default."""
     results = {}
     for i in range(0, len(ids), 50):
         chunk = ids[i:i + 50]
         try:
             data = api.get("/audio-features", params={"ids": ",".join(chunk)})
         except Exception as e:
-            # Audio Features can be unavailable (403) for new/personal apps under
-            # Spotify's extended-quota changes. Degrade to metadata-only rather than
-            # failing the entire download.
-            if "403" in str(e):
+            s = str(e)
+            if "403" in s or "404" in s:
                 break
             continue
         for feat in data.get("audio_features", []) or []:
@@ -86,27 +167,29 @@ def _batch_audio_features(api: SpotifyAPI, ids):
     return results
 
 
-def download_playlist(api: SpotifyAPI, playlist_db_id: int) -> int:
-    """Fetch a playlist's tracks and upsert into the DB.
+def download_playlist(api: SpotifyAPI, playlist_db_id: int) -> dict:
+    """One grind step: fetch as many pages as the quota allows, committing per page.
 
-    Commits after every page so progress survives Spotify quota interruptions
-    (429 QUOTA_EXCEEDED). A re-run resumes from the number of tracks already saved
-    for this playlist instead of re-fetching from the start, so a large playlist
-    can grind across daily quota windows.
+    Returns {"state": "done", "saved": n, "total": m} when complete.
+    Raises SpotifyQuotaExceeded when the developer-account quota budget runs
+    out mid-run (progress up to the last committed page is kept; the worker
+    converts the raise into a waiting state + delayed retry).
     """
     db = SessionLocal()
     try:
         pl = db.get(Playlist, playlist_db_id)
         if pl is None:
             raise RuntimeError(f"Local playlist {playlist_db_id} not found")
-        url = f"/playlists/{pl.spotify_playlist_id}/items"
-        # Resume: skip the pages already saved for this playlist.
-        offset = db.query(Track).filter(Track.playlist_id == pl.id).count()
-        total = offset
+        sid = pl.spotify_playlist_id
+        path_tmpl, page_limit = _resolve_endpoint(api, sid)  # costs 1 request
+        url = path_tmpl.format(sid=sid)
+        saved, offset = _saved_progress(db, pl)
+        total = pl.download_total or 0
+        _set_progress(db, pl, "downloading", saved=saved, total=total)
         while True:
-            page = api.get(url, params={"limit": 100, "offset": offset})
-            items = page.get("items", []) or []
-            total = page.get("total", 0)
+            page = api.get(url, params={"limit": page_limit, "offset": offset})
+            items = page.get("items") or []
+            total = page.get("total", 0) or total
             for idx, entry in enumerate(items):
                 t = entry.get("track")
                 if not t or t.get("id") is None:
@@ -132,30 +215,13 @@ def download_playlist(api: SpotifyAPI, playlist_db_id: int) -> int:
             offset += len(items)
             pl.fetched_at = datetime.now(timezone.utc)
             db.commit()  # per-page commit: progress survives quota interruptions
+            saved = db.query(Track).filter(Track.playlist_id == pl.id).count()
             if offset >= total or not items:
-                break
-        # Best-effort audio features (403 in dev mode -> {}); metadata is already
-        # saved, so a failure here must not lose the tracks.
-        try:
-            rows = db.query(Track).filter(Track.playlist_id == pl.id).all()
-            feats = _batch_audio_features(api, [r.spotify_track_id for r in rows])
-            for r in rows:
-                feat = feats.get(r.spotify_track_id) or {}
-                r.danceability = feat.get("danceability")
-                r.energy = feat.get("energy")
-                r.key = feat.get("key")
-                r.mode = feat.get("mode")
-                r.loudness = feat.get("loudness")
-                r.tempo = feat.get("tempo")
-                r.time_signature = feat.get("time_signature")
-                r.acousticness = feat.get("acousticness")
-                r.instrumentalness = feat.get("instrumentalness")
-                r.liveness = feat.get("liveness")
-                r.speechiness = feat.get("speechiness")
-                r.valence = feat.get("valence")
-            db.commit()
-        except Exception:
-            db.rollback()
-        return total
+                _set_progress(db, pl, "done", saved=saved, total=total)
+                logger.info("playlist %s complete: %s rows (%s total entries)", pl.id, saved, total)
+                return {"state": "done", "saved": saved, "total": total}
+            _set_progress(db, pl, "downloading", saved=saved, total=total)
+        # SpotifyQuotaExceeded propagates from api.get: the last committed page
+        # is kept and the worker schedules the next probe.
     finally:
         db.close()

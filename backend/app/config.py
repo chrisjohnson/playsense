@@ -6,6 +6,14 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # ---- Spotify OAuth ----
+    # Rolling 30s request budget we hold ourselves to. Dev-mode rate limits are
+    # not published; we start conservative and the pacer adapts (degrades on
+    # rate-limit 429s, recovers when clean).
+    spotify_max_req_per_30s: int = 8
+    # How often the download worker probes while waiting for a QUOTA_EXCEEDED
+    # window to reset.
+    spotify_quota_probe_seconds: int = 900
+
     spotify_client_id: str = ""
     spotify_client_secret: str = ""
     app_public_url: str = "https://local-ai-machine.local:6111"

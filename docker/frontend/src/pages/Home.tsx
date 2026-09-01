@@ -23,6 +23,51 @@ interface Props {
 const REDIRECT_URI = 'https://local-ai-machine.local:6111/api/oauth/redirect';
 const SPOTIFY_CREATE_URL = 'https://developer.spotify.com/dashboard/create';
 
+function dlStatus(p: PlaylistItem) {
+  const st = p.download_state || 'idle';
+  if (st === 'idle') return null;
+  if (st === 'queued') {
+    return (
+      <Box sx={{ mt: 1 }}>
+        <Typography variant="caption" color="text.secondary">Queued — the background worker will start shortly.</Typography>
+      </Box>
+    );
+  }
+  if (st === 'downloading') {
+    const pct = p.download_total ? Math.min(100, Math.round(((p.download_saved || 0) / p.download_total) * 100)) : undefined;
+    return (
+      <Box sx={{ mt: 1 }}>
+        <LinearProgress variant={pct != null ? 'determinate' : 'indeterminate'} value={pct ?? 0} sx={{ mb: 0.5 }} />
+        <Typography variant="caption" color="text.secondary">
+          Downloading… {p.download_saved || 0}{p.download_total ? ` / ${p.download_total}` : ''} tracks (grinds across Spotify quota windows)
+        </Typography>
+      </Box>
+    );
+  }
+  if (st === 'waiting_quota') {
+    return (
+      <Box sx={{ mt: 1 }}>
+        <LinearProgress variant="indeterminate" sx={{ mb: 0.5 }} />
+        <Typography variant="caption" color="warning.main">
+          {p.download_error || 'Spotify quota exhausted'} — saved {p.download_saved || 0}{p.download_total ? ` / ${p.download_total}` : ''}, resuming automatically
+        </Typography>
+      </Box>
+    );
+  }
+  if (st === 'done') {
+    return (
+      <Box sx={{ mt: 1 }}>
+        <Typography variant="caption" color="success.main">Download complete — {p.download_saved || 0} tracks saved.</Typography>
+      </Box>
+    );
+  }
+  return (
+    <Box sx={{ mt: 1 }}>
+      <Typography variant="caption" color="error">Download stopped: {p.download_error || 'error'}</Typography>
+    </Box>
+  );
+}
+
 export default function Home({ onOpenTracks, authUrl, onAuthed, configured, onRefresh, authed, display, oauthMsg }: Props) {
   const [pls, setPls] = useState<PlaylistItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -87,15 +132,23 @@ export default function Home({ onOpenTracks, authUrl, onAuthed, configured, onRe
   const doDownload = async (id: number) => {
     setBusy(id);
     try {
-      const r = await api.download(id);
+      await api.download(id);
       await load();
-      alert(`Downloaded ${r.downloaded} tracks.`);
     } catch (e: any) {
-      alert('Download failed: ' + (e.message || e));
+      alert('Could not queue download: ' + (e.message || e));
     } finally {
       setBusy(null);
     }
   };
+
+  // While any download is active, poll for progress (the worker grinds in the
+  // background across Spotify quota windows).
+  const anyActive = pls.some((p) => ['queued', 'downloading', 'waiting_quota'].includes(p.download_state || ''));
+  useEffect(() => {
+    if (!anyActive) return;
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, [anyActive]);
 
   const doClassify = async (id: number) => {
     setBusy(id);
@@ -188,9 +241,10 @@ export default function Home({ onOpenTracks, authUrl, onAuthed, configured, onRe
                 <Typography variant="h6" noWrap>{p.name}</Typography>
                 <Typography variant="body2" color="text.secondary" noWrap>{p.description || p.owner_id}</Typography>
                 <Typography variant="body2">{p.track_count} tracks</Typography>
+                {dlStatus(p)}
                 <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
-                  <Button size="small" onClick={() => doDownload(p.id)} disabled={busy === p.id}>
-                    {busy === p.id ? 'Downloading...' : 'Download'}
+                  <Button size="small" onClick={() => doDownload(p.id)} disabled={busy === p.id || ['queued', 'downloading', 'waiting_quota'].includes(p.download_state || '')}>
+                    {busy === p.id ? 'Queuing...' : (p.download_state === 'done' ? 'Re-download' : 'Download')}
                   </Button>
                   <Button size="small" onClick={() => doClassify(p.id)} disabled={busy === p.id}>
                     {busy === p.id ? 'Classifying...' : 'Classify'}
