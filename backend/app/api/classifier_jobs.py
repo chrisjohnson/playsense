@@ -52,7 +52,21 @@ def _out(j: ClassifierJob) -> dict:
 @router.get("")
 def list_jobs(db=Depends(get_db)):
     jobs = db.query(ClassifierJob).order_by(ClassifierJob.id.desc()).limit(50).all()
-    return [_out(j) for j in jobs]
+    from ..jobmanager import _needing
+    out = []
+    for j in jobs:
+        o = _out(j)
+        # Reality check for the UI: the job's `total` is an enqueue-time
+        # snapshot, so a done job can read 4,224/4,649 while the scope is
+        # actually fully classified (playlist grew mid-run / later job
+        # finished the rest). needing = tracks in the scope with no
+        # current-revision value RIGHT NOW. The UI shows 'partial' + Resume
+        # only when this is > 0.
+        cls = db.get(Classifier, j.classifier_id)
+        pl = db.get(Playlist, j.playlist_id)
+        o["needing"] = _needing(db, cls, j.playlist_id) if (cls and pl) else 0
+        out.append(o)
+    return out
 
 
 class EnqueueBody(BaseModel):

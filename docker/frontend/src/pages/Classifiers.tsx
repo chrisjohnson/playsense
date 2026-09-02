@@ -496,10 +496,15 @@ export default function Classifiers() {
                 const retrying = j.state === 'retrying';
                 const state = j.state || j.status;
                 const pulse = statusPulse[state] || 'idle';
-                // 'done' but the bar isn't full: the job's own ledger ended
-                // before its original scope was exhausted (playlist changed
-                // mid-run, or a later job finished the rest). Not a failure.
-                const partial = state === 'done' && j.done < j.total;
+                // Ledger vs. reality: the job's `total` is an enqueue-time
+                // snapshot, so a done job can read 4,224/4,649 while the scope
+                // is actually fully classified (playlist grew mid-run, or a
+                // later job finished the rest). `needing` (from the API) is the
+                // scope's REAL remaining work right now - it is the single
+                // condition that decides both the status and Resume.
+                const needing = j.needing ?? 0;
+                const partial = state === 'done' && j.done < j.total && needing > 0;
+                const completeShort = state === 'done' && j.done < j.total && needing === 0;
                 // A newer job for the same (classifier, playlist) scope supersedes
                 // this one: resuming it would be redundant (or would un-pause a
                 // scope the user deliberately paused via the newer job).
@@ -511,7 +516,10 @@ export default function Classifiers() {
                     <TableCell>{j.classifier_name}</TableCell>
                     <TableCell>{j.playlist_name}</TableCell>
                     <TableCell>
-                      <Tooltip title={partial ? 'Ended before every track of its original scope was counted (the playlist changed mid-run, or a later job picked up the rest). Coverage per classifier is in the table above; Resume re-checks and classifies anything still missing.' : ''}>
+                      <Tooltip title={
+                        partial ? 'Genuinely unfinished: ' + needing.toLocaleString() + ' track(s) in this scope still have no current value. Resume classifies them.'
+                          : completeShort ? 'This run\'s counter stopped at ' + j.done.toLocaleString() + ' / ' + j.total.toLocaleString() + ' (the scope changed mid-run, or a later run picked up the rest), but the scope is now fully classified - nothing to resume.'
+                            : ''}>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                           <PulseDot state={partial ? 'idle' : pulse} />
                           <Typography variant="body2" sx={{ fontWeight: 600, textTransform: 'capitalize', opacity: partial || pulse === 'idle' ? 0.7 : 1 }}>{partial ? 'partial' : state}</Typography>
@@ -521,14 +529,14 @@ export default function Classifiers() {
                     <TableCell>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         {active || j.status === 'done' ? (
-                          <LinearProgress variant="determinate" value={pct} sx={{ flexGrow: 1, height: 8, borderRadius: 4 }} />
+                          <LinearProgress variant="determinate" value={completeShort ? 100 : pct} sx={{ flexGrow: 1, height: 8, borderRadius: 4 }} />
                         ) : retrying ? (
                           <LinearProgress variant="indeterminate" sx={{ flexGrow: 1, height: 8 }} />
                         ) : (
                           <Box sx={{ flexGrow: 1 }} />
                         )}
                         <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
-                          {j.done.toLocaleString()} / {j.total.toLocaleString()}
+                          {completeShort ? 'complete' : j.done.toLocaleString() + ' / ' + j.total.toLocaleString()}
                         </Typography>
                       </Box>
                     </TableCell>

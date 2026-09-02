@@ -111,6 +111,8 @@ export type ClassifierJob = {
   state: 'queued' | 'running' | 'cancelling' | 'retrying' | 'failed' | 'done' | 'cancelled';
   total: number;
   done: number;
+  /** scope's REAL remaining work right now (tracks with no current value) */
+  needing: number;
   failed: number;
   attempts: number;
   error: string;
