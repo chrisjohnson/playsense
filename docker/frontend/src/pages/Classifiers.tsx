@@ -104,6 +104,14 @@ function ClassifierModal({ mode, classifier, onClose, onSaved }: {
   const [previewing, setPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState('');
   const reqRef = useRef(0);
+  // Incremental preview cache: results are valid for an exact (query, field
+  // type) pair. Re-running with the same definition only sends the tracks
+  // added since the last run to the LLM - the rest are served from cache.
+  const cacheRef = useRef<{ key: string; field_type: string | null; inferred: boolean; byId: Record<number, any> } | null>(null);
+  const keyOf = (qq: string, ft: string) => qq.trim() + '\u0000' + ft;
+  const curKey = keyOf(query, fieldType || '');
+  const cache = cacheRef.current && cacheRef.current.key === curKey ? cacheRef.current : null;
+  const newCount = sel.filter((t) => !cache || cache.byId[t.id] === undefined).length;
 
   // debounced picker search (250ms), stale responses dropped
   useEffect(() => {
@@ -147,14 +155,29 @@ function ClassifierModal({ mode, classifier, onClose, onSaved }: {
 
   const runPreview = async () => {
     if (!query.trim() || sel.length === 0) return;
-    setPreviewing(true); setPreviewError(''); setPreview(null);
+    setPreviewing(true); setPreviewError('');
     try {
-      const r: any = await api.previewClassifier({
+      const byId: Record<number, any> = cache ? { ...cache.byId } : {};
+      const missing = sel.filter((t) => byId[t.id] === undefined);
+      let r: any = { field_type: null, inferred: false, results: [], chunks: 0, elapsed_ms: 0 };
+      if (missing.length > 0) {
+        r = await api.previewClassifier({
+          query: query.trim(),
+          field_type: fieldType || null,
+          track_ids: missing.map((t) => t.id),
+        });
+        for (const res of r.results || []) byId[res.track_id] = res;
+        cacheRef.current = { key: curKey, field_type: r.field_type, inferred: !!r.inferred, byId };
+      }
+      const results = sel.map((t) => byId[t.id]).filter(Boolean);
+      setPreview({
         query: query.trim(),
-        field_type: fieldType || null,
-        track_ids: sel.map((t) => t.id),
+        field_type: r.field_type ?? (cache ? cache.field_type : null),
+        inferred: missing.length > 0 ? !!r.inferred : !!(cache && cache.inferred),
+        results,
+        from_cache: results.length - (missing.length > 0 ? (r.results || []).length : 0),
+        elapsed_ms: r.elapsed_ms,
       });
-      setPreview(r);
     } catch (e: any) { setPreviewError(e?.message || String(e)); }
     finally { setPreviewing(false); }
   };
@@ -271,11 +294,19 @@ function ClassifierModal({ mode, classifier, onClose, onSaved }: {
           <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
             <Button variant="contained" size="small" startIcon={<PlayArrowIcon />} onClick={runPreview}
               disabled={!query.trim() || sel.length === 0 || previewing}>
-              {previewing ? 'Classifying…' : 'Run preview on ' + sel.length + ' track' + (sel.length === 1 ? '' : 's')}
+              {previewing ? 'Classifying…'
+                : newCount === sel.length ? 'Run preview on ' + sel.length + ' track' + (sel.length === 1 ? '' : 's')
+                  : newCount === 0 ? 'All ' + sel.length + ' cached — instant'
+                    : 'Check ' + newCount + ' new (' + (sel.length - newCount) + ' cached)'}
             </Button>
             {preview ? (
               <Typography variant="caption" color="text.secondary">
-                {preview.results.length} results · type {preview.field_type}{preview.inferred ? ' (inferred)' : ''} · {(preview.elapsed_ms / 1000).toFixed(1)}s
+                {preview.results.length} results{preview.from_cache ? ' · ' + preview.from_cache + ' cached' : ''} · type {preview.field_type}{preview.inferred ? ' (inferred)' : ''}{preview.elapsed_ms ? ' · ' + (preview.elapsed_ms / 1000).toFixed(1) + 's' : ''}
+              </Typography>
+            ) : null}
+            {preview && !previewing && preview.query !== query.trim() ? (
+              <Typography variant="caption" color="warning" sx={{ display: 'block', mt: 0.5 }}>
+                Results below are for a previous version of this definition — re-run to refresh.
               </Typography>
             ) : null}
           </Box>
@@ -283,7 +314,7 @@ function ClassifierModal({ mode, classifier, onClose, onSaved }: {
           {previewing ? (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, py: 1 }}>
               <CircularProgress size={18} />
-              <Typography variant="body2">Asking the model — up to a minute for {sel.length} tracks…</Typography>
+              <Typography variant="body2">{newCount === 0 ? 'Merging cached results…' : 'Asking the model — up to a minute for ' + newCount + ' new track' + (newCount === 1 ? '' : 's') + (sel.length - newCount > 0 ? ' (' + (sel.length - newCount) + ' from cache)' : '') + '…'}</Typography>
             </Box>
           ) : null}
           {preview && preview.results && preview.results.length > 0 ? (
