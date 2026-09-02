@@ -149,7 +149,8 @@ export default function App() {
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
       <AppBar position="sticky" elevation={0} sx={{ background: 'rgba(13,15,18,0.88)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
         <Toolbar sx={{ gap: 2 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, flexGrow: 1 }}>
+          <Box component="a" href="#/" aria-label="playsense home"
+            sx={{ display: 'flex', alignItems: 'center', gap: 1.25, flexGrow: 1, textDecoration: 'none', color: 'inherit' }}>
             <Box sx={{
               width: 34, height: 34, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center',
               background: 'linear-gradient(135deg, #1ed760 0%, #0f9d46 100%)',
@@ -172,7 +173,10 @@ export default function App() {
           sx={{ minHeight: 44, '& .MuiTab-root': { minHeight: 44, py: 0, opacity: 0.62, '&.Mui-selected': { opacity: 1 } } }}
         >
           {tabs.map((t) => (
-            <Tab key={t} icon={TAB_META[t].icon} label={TAB_META[t].label} iconPosition="start" />
+            // real anchors: plain click navigates (hashchange -> state),
+            // cmd/ctrl+click (or right-click) opens the tab in a new window
+            <Tab key={t} component="a" href={hashFor(t)} icon={TAB_META[t].icon}
+              label={TAB_META[t].label} iconPosition="start" aria-label={TAB_META[t].label} />
           ))}
         </Tabs>
       </AppBar>
