@@ -1,5 +1,5 @@
 # ============================================================================
-# Spotify Tracker - multi-stage Dockerfile
+# playsense - multi-stage Dockerfile
 #
 #   docker compose build api        -> target backend
 #   docker compose build frontend   -> target frontend
@@ -25,7 +25,7 @@ COPY backend/ ./backend
 FROM base AS backend
 EXPOSE 8000
 RUN mkdir -p /data
-ENV DATABASE_URL="sqlite:////data/spotify_tracker.db"
+ENV DATABASE_URL="sqlite:////data/playsense.db"
 WORKDIR /app/backend
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 

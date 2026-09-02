@@ -1,13 +1,15 @@
-# Spotify Tracker
+# playsense
 
-A self-hosted app for connecting to your Spotify account, downloading named
-playlists with full track metadata, searching/filtering them (Latin American /
-Mexican music by artist origin and subgenre), and generating new playlists
-from filtered results — optionally pushed back to your account.
+A self-hosted AI assistant for your Spotify library: connect your account,
+download named playlists with full track metadata, then ask natural-language
+questions about your music — each question is a **classifier** whose answer is
+pre-computed by a background LLM batch job for every track. Search is instant
+and 0% LLM: it filters client-side on metadata and those pre-computed
+answers, and the result can be saved as a **generated playlist** that stays in
+sync with a real Spotify playlist.
 
-Classification is hybrid: fast structured / keyword filters run first, and an
-LLM (OpenAI-compatible endpoint — Ollama, vLLM, LM Studio, ...) is used only as
-a confidence-scoring fallback for ambiguous cases.
+Inference goes to any OpenAI-compatible endpoint (the LiteLLM proxy by
+default); the pipeline degrades gracefully when the model is unavailable.
 
 ## Contents
 
@@ -49,7 +51,7 @@ internally (not exposed to the host directly).
 - APP_PUBLIC_URL          — https://local-ai-machine.local:6111
 - SPOTIFY_REDIRECT_URI    — https://local-ai-machine.local:6111/api/oauth/redirect (match Spotify dashboard)
 - SPOTIFY_SCOPES          — user-read-private,user-read-email,playlist-read-private,playlist-read-collaborative,playlist-modify-public,playlist-modify-private
-- DATABASE_URL            — sqlite:////data/spotify_tracker.db
+- DATABASE_URL            — sqlite:////data/playsense.db
 - INFERENCE_BASE_URL      — http://host.docker.internal:11434/v1
 - INFERENCE_API_KEY       — sk-not-needed-for-ollama (only for hosted providers)
 - INFERENCE_MODEL         — llama3.1:8b
@@ -109,18 +111,18 @@ to the deterministic keyword/structured path.
 If you don't have docker compose, build and run the two images directly. The
 database persists in the local ./data directory.
 
-docker build --target backend  -t spotify-tracker:backend .
-docker build --target frontend -t spotify-tracker:frontend .
+docker build --target backend  -t playsense:backend .
+docker build --target frontend -t playsense:frontend .
 
 # Run the API. host-gateway lets it reach a host-side inference backend.
 docker run -d --name api --add-host host.docker.internal:host-gateway \
   -p 8000:8000 -v "$PWD/data:/data" \
-  -e DATABASE_URL="sqlite:////data/spotify_tracker.db" \
+  -e DATABASE_URL="sqlite:////data/playsense.db" \
   -e INFERENCE_BASE_URL="http://host.docker.internal:11434/v1" \
-  spotify-tracker:backend
+  playsense:backend
 
 # Run the frontend (nginx). It proxies /api/ to the api container.
-docker run -d --name sp-tracker-frontend -p 3000:80 spotify-tracker:frontend
+docker run -d --name playsense-frontend -p 3000:80 playsense:frontend
 
 Then open http://localhost:3000.
 
@@ -132,7 +134,7 @@ cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-export DATABASE_URL="sqlite:////tmp/spotify_tracker.db"
+export DATABASE_URL="sqlite:////tmp/playsense.db"
 export INFERENCE_BASE_URL="http://host.docker.internal:11434/v1"
 export SECRET_KEY="dev-secret"
 
@@ -179,7 +181,7 @@ npm run build        # production bundle -> dist/
 - Inference unreachable — if the backend can't reach your model at
   INFERENCE_BASE_URL, classification still works via the keyword path (it just
   won't set classification_strategy = "llm").
-- DB empty after restart — the database lives in ./data/spotify_tracker.db
+- DB empty after restart — the database lives in ./data/playsense.db
   (bind-mounted to the api container). Deleting that file resets all data.
 - docker compose unavailable — build/run the images directly as shown above;
   the compose file uses the same build targets.

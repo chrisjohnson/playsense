@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     spotify_scopes: str = "user-read-private,user-read-email,playlist-read-private,playlist-read-collaborative,playlist-modify-public,playlist-modify-private"
 
     # ---- Database ----
-    database_url: str = "sqlite:///./spotify_tracker.db"
+    database_url: str = "sqlite:///./playsense.db"
 
     # ---- Inference / hosted models (OpenAI-compatible HTTP endpoint) ----
     inference_base_url: str = "http://host.docker.internal:11434/v1"

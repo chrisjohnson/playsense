@@ -152,7 +152,9 @@ export default function App() {
               <MusicNoteIcon sx={{ fontSize: 20 }} />
             </Box>
             <Box>
-              <Typography variant="h6" sx={{ lineHeight: 1.1 }}>Spotify Tracker</Typography>
+              <Typography variant="h6" sx={{ lineHeight: 1.1, letterSpacing: -0.3, fontWeight: 800 }}>
+                play<Box component="span" sx={{ color: 'primary.main' }}>sense</Box>
+              </Typography>
               <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1 }}>analyze · classify · sync</Typography>
             </Box>
           </Box>

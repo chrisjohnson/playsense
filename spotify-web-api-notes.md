@@ -1,4 +1,4 @@
-# Spotify Web API — Notes for Spotify Tracker
+# Spotify Web API — Notes for playsense
 
 Concise, concrete notes for a self-hosted app that reads a user's playlists/albums/tracks and pushes saved content back. URLs cite the official Spotify for Developers documentation (developer.spotify.com).
 
@@ -119,7 +119,7 @@ Base URL: `https://api.spotify.com/v1/`. Send `Authorization: Bearer <access_tok
 
 ## 6. Scopes
 
-**Read-only scopes** needed for Spotify Tracker's reads:
+**Read-only scopes** needed for playsense's reads:
 - `user-read-private` — read the user's profile (username, avatar, etc.).
 - `user-read-email` — read the user's email address.
 - `playlist-read-private` — read **private** playlists.

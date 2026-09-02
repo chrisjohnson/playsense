@@ -234,7 +234,7 @@ localhost is not your host's localhost. So:
         environment:
           INFERENCE_BASE_URL: "http://inference:11434/v1"
           INFERENCE_MODEL: "llama-3.1-8b"
-          DB_URL: "sqlite+aiosqlite:///./spotify_tracker.db"
+          DB_URL: "sqlite+aiosqlite:///./playsense.db"
         ports: ["8000:8000"]
         depends_on: ["inference"]
         networks: [tracker]

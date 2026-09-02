@@ -1,4 +1,4 @@
-# AGENTS.md - Spotify Tracker
+# AGENTS.md - playsense
 
 Notes for agents working in this repo. Read before editing.
 
@@ -25,7 +25,7 @@ Verify things by inspecting the container / host directly - never assume a path.
   These are in .gitignore; verify with git status --ignored if unsure.
 - If you changed the Dockerfile or anything under backend/, REBUILD the image
   (backend source is COPY-ed into the image at build time):
-  docker build --target backend -t spotify-tracker:backend .
+  docker build --target backend -t playsense:backend .
   Then recreate the api container and re-verify (see section 3).
 
 ## 2. Architecture (quick map)
@@ -39,7 +39,7 @@ Verify things by inspecting the container / host directly - never assume a path.
     strategy="semantic_unavailable" (never a false confident "llm" verdict).
   - spotify/: OAuth + download.
 - Frontend (React): docker/frontend/ (built to dist/, served by nginx).
-- Compose: api (:8000) + frontend (:3000). DB at ./data/spotify_tracker.db.
+- Compose: api (:8000) + frontend (:3000). DB at ./data/playsense.db.
 
 ## 3. Test / verify changes
 
@@ -64,7 +64,7 @@ Never ship a change without verifying. Prefer the running container.
   the api container (preserve env: DATABASE_URL, WORKER_CONCURRENCY, INFERENCE_BASE_URL,
   extra-hosts, network, volume bind).
 - After verification, reset the DB to pristine for handoff: stop api, delete
-  data/spotify_tracker.db from the REAL host path (via a container that mounts it),
+  data/playsense.db from the REAL host path (via a container that mounts it),
   restart.
 
 ## 4. Environmental constraints (known)
@@ -106,7 +106,7 @@ full. Design around them, do not fight them:
   on playlists) survives container restarts. A 5000-track playlist needs ~100
   page requests - that can legitimately span multiple quota windows. NEVER make
   the download endpoint synchronous for large playlists.
-- The DB (data/spotify_tracker.db) holds the OAuth tokens AND download progress.
+- The DB (data/playsense.db) holds the OAuth tokens AND download progress.
   The api container MUST keep the host bind mount on /data (host path:
   $HOST_WORK_DIR equivalent of this repo's data/ - see the container's mounts,
   `docker inspect api`); the old failure mode was running api without it, losing

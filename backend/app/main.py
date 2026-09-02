@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Spotify Tracker", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="playsense", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -40,9 +40,9 @@ app.include_router(api_router, prefix="/api")
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "service": "spotify-tracker-api"}
+    return {"status": "ok", "service": "playsense-api"}
 
 
 @app.get("/")
 async def root():
-    return {"service": "spotify-tracker-api", "docs": "/api/docs"}
+    return {"service": "playsense-api", "docs": "/api/docs"}

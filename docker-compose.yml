@@ -1,5 +1,5 @@
 # ============================================================================
-# Spotify Tracker - docker-compose (reference)
+# playsense - docker-compose (reference)
 #
 #   docker compose up --build
 #   then open https://local-ai-machine.local:6111 (self-signed cert; trust once)
@@ -37,7 +37,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: backend
-    image: spotify-tracker:backend
+    image: playsense:backend
     restart: unless-stopped
     networks:
       - sp-tracker-net
@@ -47,7 +47,7 @@ services:
       - ./data:/data
       - /home/chris/.spotify-tracker:/spotify-tracker
     environment:
-      DATABASE_URL: sqlite:////data/spotify_tracker.db
+      DATABASE_URL: sqlite:////data/playsense.db
       WORKER_CONCURRENCY: "4"
     command: "uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
@@ -56,7 +56,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: frontend
-    image: spotify-tracker:frontend
+    image: playsense:frontend
     restart: unless-stopped
     networks:
       - sp-tracker-net

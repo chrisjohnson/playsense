@@ -1,4 +1,4 @@
-# Region/Nation/Era/Language Tagging for a Self-Hosted Spotify Tracker
+# Region/Nation/Era/Language Tagging for playsense
 
 *Concise, citation-backed design notes for classifying whether a track is "Latin American" vs specifically "Mexican", with general region/nation/era/language tagging.*
 
