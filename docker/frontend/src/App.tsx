@@ -137,8 +137,7 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  // AI first: the classifiers are the app's headline feature.
-  const tabs: TabName[] = ['ai', 'home', 'search', 'generate'];
+  const tabs: TabName[] = ['home', 'ai', 'search', 'generate'];
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>

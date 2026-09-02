@@ -237,9 +237,9 @@ full. Design around them, do not fight them:
   `dsh-pulse-glow` (pulse dot), `dsh-row--running` (breathing row tint on
   the live classifier-job row), `dsh-fade-up`/`dsh-page-enter` (tab
   content entrance).
-- Tab order is AI first (`App.tsx`) - the classifiers are the app's
-  headline feature. The AI job table shows one PulseDot per job row and a
-  breathing background while running; a job whose classifier was deleted is
-  auto-marked done on the next 10s tick (jobmanager `_step_job`).
+- Tab order is Home, AI, Search, Generate (`App.tsx`). The AI job table
+  shows one PulseDot per job row and a breathing background while running;
+  a job whose classifier was deleted is auto-marked done on the next 10s
+  tick (jobmanager `_step_job`).
 - NOTE: the jobs endpoint is `GET /api/classifier-jobs` (HYPHEN) -
   `/api/classifier/jobs` 404s (cost a confusing "empty" curl once).
