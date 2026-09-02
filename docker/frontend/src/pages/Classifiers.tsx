@@ -43,12 +43,30 @@ const statusPulse: Record<string, PulseState> = {
   done: 'done', error: 'error', cancelled: 'idle',
 };
 
-function elapsed(j: ClassifierJob): string {
-  const start = j.started_at ? new Date(j.started_at).getTime() : (j.created_at ? new Date(j.created_at).getTime() : 0);
-  const end = j.finished_at ? new Date(j.finished_at).getTime() : Date.now();
-  const s = Math.max(0, Math.round((end - start) / 1000));
+function fmtDur(s: number): string {
+  s = Math.max(0, Math.round(s));
   if (s < 60) return s + 's';
-  return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+  if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+  return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
+}
+
+function elapsed(j: ClassifierJob, now?: number): string {
+  const start = j.started_at ? new Date(j.started_at).getTime() : (j.created_at ? new Date(j.created_at).getTime() : 0);
+  const end = j.finished_at ? new Date(j.finished_at).getTime() : (now ?? Date.now());
+  if (!start) return '—';
+  return fmtDur((end - start) / 1000);
+}
+
+// ETA from the job's current pace - only shown once a little work has
+// landed (a 30s warm-up) so the number isn't pure noise at the start.
+function etaText(j: ClassifierJob, now: number): string {
+  const st = j.state || j.status;
+  if (st !== 'running' || !j.started_at || j.done <= 0 || j.total <= j.done) return '';
+  const secs = (now - new Date(j.started_at).getTime()) / 1000;
+  if (secs < 30) return '';
+  const left = ((j.total - j.done) / j.done) * secs;
+  if (left < 5) return '';
+  return ' · ≈ ' + fmtDur(left) + ' left';
 }
 
 type PreviewTrack = {
@@ -377,6 +395,19 @@ export default function Classifiers() {
     return () => clearInterval(iv);
   }, [refresh]);
 
+  // 1-second ticker while any job is live: elapsed time should count up
+  // smoothly instead of jumping in 8s poll steps.
+  const [now, setNow] = useState<number>(() => Date.now());
+  const hasLive = jobs.some((j) => {
+    const st = j.state || j.status;
+    return st === 'running' || st === 'retrying' || st === 'cancelling' || st === 'queued';
+  });
+  useEffect(() => {
+    if (!hasLive) return;
+    const iv = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(iv);
+  }, [hasLive]);
+
   const enqueueAll = async (cid: number) => {
     setError('');
     try {
@@ -572,7 +603,11 @@ export default function Classifiers() {
                       </Box>
                     </TableCell>
                     <TableCell align="center">{j.failed || 0}</TableCell>
-                    <TableCell align="center">{elapsed(j)}</TableCell>
+                    <TableCell align="center">
+                      <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
+                        {elapsed(j, now)}{etaText(j, now)}
+                      </Typography>
+                    </TableCell>
                     <TableCell sx={{ maxWidth: 280 }}>
                       {(retrying || state === 'failed') && j.error ? (
                         <Box>
