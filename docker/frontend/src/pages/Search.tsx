@@ -103,9 +103,10 @@ const baseFilters = (ai: Filters['ai']): Filters => ({
 const yearOf = (t: Track) => (t.release_date || '').slice(0, 4);
 
 // ---------------------------------------------------------------------------
-// URL <-> view state: the hash query mirrors the whole Search view (playlist,
-// every filter, paging, sort), so a refresh or a shared link restores it
-// exactly. Keys: pl q ar al ti ymin ymax dmin dmax lang pg rs sk sd ai<CID>.
+// URL <-> view state: the query string (/search?pl=4&q=leon) mirrors the
+// whole Search view (playlist, every filter, paging, sort), so a refresh or
+// a shared link restores it exactly. Keys: pl q ar al ti ymin ymax dmin
+// dmax lang pg rs sk sd ai<CID>.
 // ---------------------------------------------------------------------------
 
 function encodeAi(v: any): string | null {
@@ -153,12 +154,11 @@ function viewToQuery(pid: number | '', query: string, f: Filters, page: number, 
   return p.toString();
 }
 
-// The query string to initialize from: whatever is in the hash now, else the
+// The query string to initialize from: whatever is in the URL now, else the
 // one remembered from the last time this page was visible.
 function initialQuery(): string {
-  const h = window.location.hash;
-  const i = h.indexOf('?');
-  return i >= 0 ? h.slice(i + 1) : lastSearchQuery();
+  const s = window.location.search;
+  return s ? s.slice(1) : lastSearchQuery();
 }
 
 // The backend already unwraps the model's JSON/fence wrapper, but if a raw
@@ -181,8 +181,8 @@ function cleanExplanation(raw: string): string {
 
 export default function Search({ authed }: Props) {
   const [playlists, setPlaylists] = useState<PlaylistItem[]>([]);
-  // The initial view comes from the hash query (#/search?pl=4&q=...), or from
-  // what the page remembered before (see ../searchParams).
+  // The initial view comes from the URL query string (/search?pl=4&q=...),
+  // or from what the page remembered before (see ../searchParams).
   const [pid, setPid] = useState<number | ''>(() => {
     // (default playlist preference applied when the list loads)
     const pl = new URLSearchParams(initialQuery()).get('pl');
@@ -281,13 +281,18 @@ export default function Search({ authed }: Props) {
 
   // The URL mirrors the view at all times: refreshing (or opening a shared
   // link) restores exactly this playlist + filters. replaceState adds no
-  // history entry per keystroke; App.tsx strips the query when you leave this
-  // tab, and rememberSearchQuery keeps it for the next mount of this page.
+  // history entry per keystroke. While this page is not the current path
+  // (a tab switch in progress) App.tsx owns the URL - it pushes the /search
+  // entry with the remembered query; we only update memory here.
   useEffect(() => {
     const qs = viewToQuery(pid, query, f, page, rows, sortKey, sortDir);
-    const next = '#/search' + (qs ? '?' + qs : '');
-    if (window.location.hash !== next) window.history.replaceState(null, '', next);
     rememberSearchQuery(qs);
+    if (window.location.pathname === '/search') {
+      const next = '/search' + (qs ? '?' + qs : '');
+      if (window.location.pathname + window.location.search !== next) {
+        window.history.replaceState(null, '', next);
+      }
+    }
   }, [pid, query, f, page, rows, sortKey, sortDir]);
 
   const q = query.trim();

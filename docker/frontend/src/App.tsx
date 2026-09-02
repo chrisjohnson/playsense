@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import AppBar from '@mui/material/AppBar';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
@@ -19,11 +19,15 @@ import Search from './pages/Search';
 import Generate from './pages/Generate';
 import Classifiers from './pages/Classifiers';
 import { api } from './api';
+import { lastSearchQuery } from './searchParams';
 
 export type TabName = 'home' | 'search' | 'generate' | 'ai';
 
-// Tabs are reflected in the URL hash (#/search, #/generate, ...) so refresh and
-// back/forward keep you where you were.
+// Tabs are real paths (/search, /generate, ...) with the Search page's filters
+// in the query string (/search?pl=4&q=leon). Real links (not hashes): refresh
+// and back/forward keep you where you were, and cmd/ctrl+click opens a tab in
+// a new window without touching the current one (a fragment link would
+// rewrite the current tab too).
 const VALID_TABS: TabName[] = ['home', 'search', 'generate', 'ai'];
 
 const TAB_META: Record<TabName, { label: string; icon: JSX.Element }> = {
@@ -33,17 +37,15 @@ const TAB_META: Record<TabName, { label: string; icon: JSX.Element }> = {
   ai: { label: 'AI', icon: <SmartToyIcon /> },
 };
 
-function parseHash(): TabName {
-  // the hash may carry a query (#/search?pl=4&q=...) - the tab is the path part
-  const h = window.location.hash.replace(/^#\/?/, '').split('?')[0];
-  if (h === '' || h === 'home') return 'home';
-  const t = h.split('/')[0];
+function parsePath(): TabName {
+  const p = window.location.pathname.replace(/\/+$/, '') || '/';
+  const t = p.split('/')[1] || 'home';
   return (VALID_TABS as string[]).includes(t) ? (t as TabName) : 'home';
 }
 
-function hashFor(tab: TabName): string {
-  if (tab === 'home') return '#/';
-  return '#/' + tab;
+function pathFor(tab: TabName): string {
+  if (tab === 'home') return '/';
+  return '/' + tab;
 }
 
 function ConnectionChip({ configured, authed, display, authUrl }: {
@@ -68,7 +70,7 @@ function ConnectionChip({ configured, authed, display, authUrl }: {
 }
 
 export default function App() {
-  const [tab, setTabState] = useState<TabName>(() => parseHash());
+  const [tab, setTabState] = useState<TabName>(() => parsePath());
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [display, setDisplay] = useState('');
   const [authUrl, setAuthUrl] = useState('');
@@ -96,11 +98,15 @@ export default function App() {
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
     const err = p.get('spotify_error');
+    const ok = p.get('spotify') === 'connected';
     if (err) setOauthMsg('Spotify connection failed: ' + err);
-    else if (p.get('spotify') === 'connected') setOauthMsg('Connected to Spotify!');
-    if (window.history && window.history.replaceState) {
-      // strip the OAuth query params but KEEP the hash (tab routing lives there)
-      window.history.replaceState({}, '', window.location.pathname + window.location.hash);
+    else if (ok) setOauthMsg('Connected to Spotify!');
+    if (err || ok) {
+      // strip just the OAuth params, keep any others (e.g. /search?pl=4&q=...)
+      p.delete('spotify_error');
+      p.delete('spotify');
+      const rest = p.toString();
+      window.history.replaceState({}, '', window.location.pathname + (rest ? '?' + rest : ''));
     }
     refreshAuth();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -124,23 +130,26 @@ export default function App() {
 
   const setTab = (t: TabName) => setTabState(t);
 
-  // Hash <-> state sync. One writer for the PATH: whenever the tab changes,
-  // make the URL hash match. The SEARCH page additionally owns the query part
-  // of the hash (its filter state); we keep it while on Search and drop it
-  // elsewhere so other tabs get clean URLs (the Search page remembers it).
+  // URL <-> state sync. The tab owns the PATH; the Search page owns the query
+  // string (its filters, remembered via ../searchParams while off-page).
+  // Tab switches push a history entry; back/forward (popstate) must not.
+  const firstRun = useRef(true);
+  const fromPop = useRef(false);
   useEffect(() => {
-    const h = window.location.hash;
-    const qIdx = h.indexOf('?');
-    const query = tab === 'search' && qIdx >= 0 ? h.slice(qIdx) : '';
-    const want = hashFor(tab) + query;
-    if (window.location.hash !== want) window.location.hash = want;
+    if (firstRun.current) { firstRun.current = false; return; }
+    if (fromPop.current) { fromPop.current = false; return; }
+    const q = lastSearchQuery();
+    const want = pathFor(tab) + (tab === 'search' && q ? '?' + q : '');
+    if (window.location.pathname + window.location.search !== want) {
+      window.history.pushState(null, '', want);
+    }
   }, [tab]);
 
-  // Browser back/forward or a manual hash edit (e.g. pasted link) -> state.
+  // Browser back/forward (or the URL bar) -> state, without pushing a new entry.
   useEffect(() => {
-    const onHash = () => setTabState(parseHash());
-    window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
+    const onPop = () => { fromPop.current = true; setTabState(parsePath()); };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
   }, []);
 
   const tabs: TabName[] = ['home', 'ai', 'search', 'generate'];
@@ -149,7 +158,7 @@ export default function App() {
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
       <AppBar position="sticky" elevation={0} sx={{ background: 'rgba(13,15,18,0.88)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
         <Toolbar sx={{ gap: 2 }}>
-          <Box component="a" href="#/" aria-label="playsense home"
+          <Box component="a" href="/" aria-label="playsense home"
             sx={{ display: 'flex', alignItems: 'center', gap: 1.25, flexGrow: 1, textDecoration: 'none', color: 'inherit' }}>
             <Box sx={{
               width: 34, height: 34, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -169,14 +178,28 @@ export default function App() {
         </Toolbar>
         <Tabs
           value={tabs.indexOf(tab)}
-          onChange={(_, v: number) => { const t = tabs[v]; if (t && t !== tab) setTab(t); }}
+          onChange={(e: React.SyntheticEvent, v: number) => {
+            // modifier-key / middle clicks belong to the browser (new tab,
+            // background tab) - never run the in-page transition for them
+            const ne = e.nativeEvent as MouseEvent & KeyboardEvent;
+            if (ne.metaKey || ne.ctrlKey || ne.shiftKey || ne.altKey
+              || (ne instanceof MouseEvent && ne.button !== 0)) return;
+            const t = tabs[v]; if (t && t !== tab) setTab(t);
+          }}
           sx={{ minHeight: 44, '& .MuiTab-root': { minHeight: 44, py: 0, opacity: 0.62, '&.Mui-selected': { opacity: 1 } } }}
         >
           {tabs.map((t) => (
-            // real anchors: plain click navigates (hashchange -> state),
-            // cmd/ctrl+click (or right-click) opens the tab in a new window
-            <Tab key={t} component="a" href={hashFor(t)} icon={TAB_META[t].icon}
-              label={TAB_META[t].label} iconPosition="start" aria-label={TAB_META[t].label} />
+            // real links at real paths: a plain click is intercepted for an
+            // instant SPA switch; cmd/ctrl/shift+click, middle-click and
+            // right-click are left fully to the browser (new tab, background
+            // tab, copy address, ...) and never touch the current page.
+            <Tab key={t} component="a" href={pathFor(t)} icon={TAB_META[t].icon}
+              label={TAB_META[t].label} iconPosition="start" aria-label={TAB_META[t].label}
+              onClick={(e: React.MouseEvent) => {
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+                e.preventDefault();
+                setTab(t);
+              }} />
           ))}
         </Tabs>
       </AppBar>
