@@ -34,7 +34,8 @@ const TAB_META: Record<TabName, { label: string; icon: JSX.Element }> = {
 };
 
 function parseHash(): TabName {
-  const h = window.location.hash.replace(/^#\/?/, '');
+  // the hash may carry a query (#/search?pl=4&q=...) - the tab is the path part
+  const h = window.location.hash.replace(/^#\/?/, '').split('?')[0];
   if (h === '' || h === 'home') return 'home';
   const t = h.split('/')[0];
   return (VALID_TABS as string[]).includes(t) ? (t as TabName) : 'home';
@@ -123,10 +124,15 @@ export default function App() {
 
   const setTab = (t: TabName) => setTabState(t);
 
-  // Hash <-> state sync. One writer: whenever the tab changes, make the URL
-  // hash match (no spurious history entries).
+  // Hash <-> state sync. One writer for the PATH: whenever the tab changes,
+  // make the URL hash match. The SEARCH page additionally owns the query part
+  // of the hash (its filter state); we keep it while on Search and drop it
+  // elsewhere so other tabs get clean URLs (the Search page remembers it).
   useEffect(() => {
-    const want = hashFor(tab);
+    const h = window.location.hash;
+    const qIdx = h.indexOf('?');
+    const query = tab === 'search' && qIdx >= 0 ? h.slice(qIdx) : '';
+    const want = hashFor(tab) + query;
     if (window.location.hash !== want) window.location.hash = want;
   }, [tab]);
 

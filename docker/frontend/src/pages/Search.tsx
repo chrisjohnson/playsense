@@ -36,6 +36,7 @@ import SmartToyIcon from '@mui/icons-material/SmartToy';
 
 import { api, PlaylistItem, Track, Classifier } from '../api';
 import { DataTable } from '../components';
+import { rememberSearchQuery, lastSearchQuery } from '../searchParams';
 
 interface Props { authed: boolean; }
 
@@ -101,6 +102,65 @@ const baseFilters = (ai: Filters['ai']): Filters => ({
 
 const yearOf = (t: Track) => (t.release_date || '').slice(0, 4);
 
+// ---------------------------------------------------------------------------
+// URL <-> view state: the hash query mirrors the whole Search view (playlist,
+// every filter, paging, sort), so a refresh or a shared link restores it
+// exactly. Keys: pl q ar al ti ymin ymax dmin dmax lang pg rs sk sd ai<CID>.
+// ---------------------------------------------------------------------------
+
+function encodeAi(v: any): string | null {
+  if (v === true) return 't';
+  if (typeof v === 'string' && v.trim()) return 's:' + v;
+  if (v && typeof v === 'object') {
+    const min = v.min !== undefined && v.min !== '' ? String(v.min) : '';
+    const max = v.max !== undefined && v.max !== '' ? String(v.max) : '';
+    if (min || max) return 'r:' + min + '~' + max;
+  }
+  return null;
+}
+
+function decodeAi(s: string): any {
+  if (s === 't') return true;
+  if (s.startsWith('s:')) return s.slice(2);
+  if (s.startsWith('r:')) {
+    const body = s.slice(2);
+    const i = body.indexOf('~');
+    return { min: i >= 0 ? body.slice(0, i) : body, max: i >= 0 ? body.slice(i + 1) : '' };
+  }
+  return s;
+}
+
+function viewToQuery(pid: number | '', query: string, f: Filters, page: number, rows: number, sortKey: SortKey, sortDir: 'asc' | 'desc'): string {
+  const p = new URLSearchParams();
+  if (pid !== '') p.set('pl', String(pid));
+  if (query.trim()) p.set('q', query.trim());
+  if (f.artist.trim()) p.set('ar', f.artist.trim());
+  if (f.album.trim()) p.set('al', f.album.trim());
+  if (f.title.trim()) p.set('ti', f.title.trim());
+  if (f.minYear) p.set('ymin', f.minYear);
+  if (f.maxYear) p.set('ymax', f.maxYear);
+  if (f.minDur) p.set('dmin', f.minDur);
+  if (f.maxDur) p.set('dmax', f.maxDur);
+  if (f.language) p.set('lang', f.language);
+  for (const [cid, v] of Object.entries(f.ai)) {
+    const enc = encodeAi(v);
+    if (enc !== null) p.set('ai' + cid, enc);
+  }
+  if (page > 0) p.set('pg', String(page));
+  if (rows !== 50) p.set('rs', String(rows));
+  if (sortKey !== 'name') p.set('sk', sortKey);
+  if (sortDir !== 'asc') p.set('sd', sortDir);
+  return p.toString();
+}
+
+// The query string to initialize from: whatever is in the hash now, else the
+// one remembered from the last time this page was visible.
+function initialQuery(): string {
+  const h = window.location.hash;
+  const i = h.indexOf('?');
+  return i >= 0 ? h.slice(i + 1) : lastSearchQuery();
+}
+
 // The backend already unwraps the model's JSON/fence wrapper, but if a raw
 // blob ever slips through (older backend, odd model behavior) sanitize it here.
 function cleanExplanation(raw: string): string {
@@ -121,18 +181,41 @@ function cleanExplanation(raw: string): string {
 
 export default function Search({ authed }: Props) {
   const [playlists, setPlaylists] = useState<PlaylistItem[]>([]);
-  const [pid, setPid] = useState<number | ''>('');
-  // (default playlist preference applied when the list loads)
+  // The initial view comes from the hash query (#/search?pl=4&q=...), or from
+  // what the page remembered before (see ../searchParams).
+  const [pid, setPid] = useState<number | ''>(() => {
+    // (default playlist preference applied when the list loads)
+    const pl = new URLSearchParams(initialQuery()).get('pl');
+    return pl && !Number.isNaN(Number(pl)) ? Number(pl) : '';
+  });
   const [tracks, setTracks] = useState<Track[]>([]);
   const [classifiers, setClassifiers] = useState<Classifier[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [query, setQuery] = useState('');
-  const [f, setF] = useState<Filters>(baseFilters(EMPTY_AI));
-  const [page, setPage] = useState(0);
-  const [rows, setRows] = useState(50);
-  const [sortKey, setSortKey] = useState<SortKey>('name');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [query, setQuery] = useState(() => new URLSearchParams(initialQuery()).get('q') || '');
+  const [f, setF] = useState<Filters>(() => {
+    const p = new URLSearchParams(initialQuery());
+    const out = baseFilters({});
+    const str = (k: string, key: 'artist' | 'album' | 'title') => { const v = p.get(k); if (v) out[key] = v; };
+    str('ar', 'artist'); str('al', 'album'); str('ti', 'title');
+    const rng = (k: string, key: 'minYear' | 'maxYear' | 'minDur' | 'maxDur') => { const v = p.get(k); if (v) out[key] = v; };
+    rng('ymin', 'minYear'); rng('ymax', 'maxYear'); rng('dmin', 'minDur'); rng('dmax', 'maxDur');
+    const lang = p.get('lang'); if (lang) out.language = lang;
+    const ai: Record<number, any> = {};
+    for (const [k, v] of p.entries()) {
+      if (k.startsWith('ai') && /^\d+$/.test(k.slice(2))) ai[Number(k.slice(2))] = decodeAi(v);
+    }
+    out.ai = ai;
+    return out;
+  });
+  const [page, setPage] = useState(() => Number(new URLSearchParams(initialQuery()).get('pg') || 0) || 0);
+  const [rows, setRows] = useState(() => Number(new URLSearchParams(initialQuery()).get('rs') || 50) || 50);
+  const [sortKey, setSortKey] = useState<SortKey>(() => {
+    const v = new URLSearchParams(initialQuery()).get('sk');
+    return v === 'year' || v === 'duration' ? v : 'name';
+  });
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() =>
+    new URLSearchParams(initialQuery()).get('sd') === 'desc' ? 'desc' : 'asc');
   // per-track AI reasoning dialog
   const [reasonFor, setReasonFor] = useState<{ t: Track; c: Classifier } | null>(null);
   const [explanation, setExplanation] = useState('');
@@ -195,6 +278,17 @@ export default function Search({ authed }: Props) {
       })
       .catch(() => {});
   }, []);
+
+  // The URL mirrors the view at all times: refreshing (or opening a shared
+  // link) restores exactly this playlist + filters. replaceState adds no
+  // history entry per keystroke; App.tsx strips the query when you leave this
+  // tab, and rememberSearchQuery keeps it for the next mount of this page.
+  useEffect(() => {
+    const qs = viewToQuery(pid, query, f, page, rows, sortKey, sortDir);
+    const next = '#/search' + (qs ? '?' + qs : '');
+    if (window.location.hash !== next) window.history.replaceState(null, '', next);
+    rememberSearchQuery(qs);
+  }, [pid, query, f, page, rows, sortKey, sortDir]);
 
   const q = query.trim();
   const activeClassifiers = useMemo(
