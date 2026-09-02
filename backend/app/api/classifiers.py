@@ -405,6 +405,30 @@ def run_classifier(cid: int, body: RunIn):
         raise HTTPException(502, f"Classifier run failed mid-pass: {str(e)[:300]}")
 
 
+def _extract_explanation(content: str) -> str:
+    """Pull the human-readable explanation out of a model reply. Models
+    comply with 'respond with JSON' variously: bare JSON, JSON wrapped in a
+    ```json fence, a bare string, or plain prose. All of these should come
+    back as plain text, never as a raw fenced blob."""
+    import re
+    t = (content or "").strip()
+    m = re.match(r"^```[a-zA-Z0-9]*\s*\n?(.*?)\n?```\s*$", t, re.S)
+    if m:
+        t = m.group(1).strip()
+    try:
+        data = json.loads(t)
+    except (json.JSONDecodeError, TypeError):
+        return t
+    if isinstance(data, dict):
+        for k in ("explanation", "reason", "answer", "text"):
+            v = data.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+    if isinstance(data, str) and data.strip():
+        return data.strip()
+    return t
+
+
 @router.post("/{cid}/explain")
 def explain_value(cid: int, body: ExplainIn):
     """Re-ask the LLM for a detailed, plain-language explanation of why one
@@ -450,10 +474,7 @@ def explain_value(cid: int, body: ExplainIn):
         llm = InferenceAdapter()
         content = llm.chat([{"role": "system", "content": system},
                             {"role": "user", "content": user}])
-        try:
-            explanation = str(json.loads(content).get("explanation") or content).strip()
-        except (json.JSONDecodeError, TypeError):
-            explanation = content.strip()
+        explanation = _extract_explanation(content)
     except Exception as e:
         raise HTTPException(502, f"Explanation unavailable (LLM): {str(e)[:200]}")
     return {"classifier_id": c.id, "classifier": c.name, "query": c.query,

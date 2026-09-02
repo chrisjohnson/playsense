@@ -101,6 +101,24 @@ const baseFilters = (ai: Filters['ai']): Filters => ({
 
 const yearOf = (t: Track) => (t.release_date || '').slice(0, 4);
 
+// The backend already unwraps the model's JSON/fence wrapper, but if a raw
+// blob ever slips through (older backend, odd model behavior) sanitize it here.
+function cleanExplanation(raw: string): string {
+  let t = (raw || '').trim();
+  const m = t.match(/^```[a-zA-Z0-9]*\s*\n?([\s\S]*?)\n?```\s*$/);
+  if (m) t = m[1].trim();
+  try {
+    const d: any = JSON.parse(t);
+    if (d && typeof d === 'object' && !Array.isArray(d)) {
+      for (const k of ['explanation', 'reason', 'answer', 'text']) {
+        if (typeof d[k] === 'string' && d[k].trim()) return d[k].trim();
+      }
+    }
+    if (typeof d === 'string' && d.trim()) return d.trim();
+  } catch { /* not JSON - leave as-is */ }
+  return t;
+}
+
 export default function Search({ authed }: Props) {
   const [playlists, setPlaylists] = useState<PlaylistItem[]>([]);
   const [pid, setPid] = useState<number | ''>('');
@@ -142,7 +160,7 @@ export default function Search({ authed }: Props) {
     setExplainError('');
     try {
       const r: any = await api.explainClassifierValue(reasonFor.c.id, reasonFor.t.id);
-      setExplanation(r.explanation || '(no explanation returned)');
+      setExplanation(cleanExplanation(r.explanation || '(no explanation returned)'));
     } catch (e: any) {
       setExplainError(e?.message || String(e));
     } finally {
