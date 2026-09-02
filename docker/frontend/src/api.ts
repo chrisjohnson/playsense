@@ -38,6 +38,12 @@ export const api = {
   deleteClassifierJob: (id: number) => req(`/classifier-jobs/${id}`, { method: 'DELETE' }),
   explainClassifierValue: (classifierId: number, trackId: number) =>
     req(`/classifiers/${classifierId}/explain`, { method: 'POST', body: JSON.stringify({ track_id: trackId }) }),
+  previewClassifier: (body: { query: string; field_type: string | null; track_ids: number[] }) =>
+    req('/classifiers/preview', { method: 'POST', body: JSON.stringify(body) }),
+  searchTracksForPreview: (q: string, limit = 8) =>
+    req('/classifiers/track-search?q=' + encodeURIComponent(q) + '&limit=' + limit),
+  randomTracksForPreview: (limit = 20) =>
+    req('/classifiers/random-tracks?limit=' + limit),
   generate: (body: any) => req('/generate', { method: 'POST', body: JSON.stringify(body) }),
   runs: () => req('/runs'),
   saveCredentials: (client_id: string, client_secret: string) =>

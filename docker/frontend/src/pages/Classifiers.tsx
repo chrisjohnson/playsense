@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
@@ -16,11 +16,23 @@ import TableCell from '@mui/material/TableCell';
 import TableContainer from '@mui/material/TableContainer';
 import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
+import Divider from '@mui/material/Divider';
+import IconButton from '@mui/material/IconButton';
 import AddIcon from '@mui/icons-material/Add';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import StopIcon from '@mui/icons-material/Stop';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import EditIcon from '@mui/icons-material/Edit';
+import CloseIcon from '@mui/icons-material/Close';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CancelIcon from '@mui/icons-material/Cancel';
+import SearchIcon from '@mui/icons-material/Search';
+import ShuffleIcon from '@mui/icons-material/Shuffle';
 
 import { api, Classifier, ClassifierJob } from '../api';
 
@@ -38,17 +50,281 @@ function elapsed(j: ClassifierJob): string {
   return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
 }
 
+type PreviewTrack = {
+  id: number;
+  name: string;
+  artists: string[];
+  album_name?: string | null;
+  release_date?: string | null;
+};
+
+type PreviewResult = {
+  track_id: number;
+  name: string;
+  artists: string[];
+  value: any;
+  value_ok: boolean;
+  reason: string;
+};
+
+const PREVIEW_MAX = 50;
+
+function trackLabel(t: { name: string; artists?: string[]; album_name?: string | null }): string {
+  const artists = (t.artists || []).join(', ');
+  return t.name + (artists ? ' — ' + artists : '') + (t.album_name ? ' (' + t.album_name + ')' : '');
+}
+
+function valueCell(v: any, ok: boolean) {
+  if (!ok) return <Chip size="small" label="unparsed" color="warning" />;
+  if (v === true) return <CheckCircleIcon fontSize="small" color="success" />;
+  if (v === false) return <CancelIcon fontSize="small" color="disabled" />;
+  return <Typography variant="body2">{typeof v === 'object' ? JSON.stringify(v) : String(v)}</Typography>;
+}
+
+function ClassifierModal({ mode, classifier, onClose, onSaved }: {
+  mode: 'create' | 'edit';
+  classifier?: Classifier;
+  onClose: () => void;
+  onSaved: (msg: string) => void;
+}) {
+  const isEdit = mode === 'edit' && !!classifier;
+  const [name, setName] = useState(isEdit ? classifier!.name : '');
+  const [query, setQuery] = useState(isEdit ? classifier!.query : '');
+  const [fieldType, setFieldType] = useState(isEdit ? (classifier!.field_type || '') : '');
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState('');
+
+  const [sel, setSel] = useState<PreviewTrack[]>([]);
+  const [q, setQ] = useState('');
+  const [matches, setMatches] = useState<PreviewTrack[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [preview, setPreview] = useState<any | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewError, setPreviewError] = useState('');
+  const reqRef = useRef(0);
+
+  // debounced picker search (250ms), stale responses dropped
+  useEffect(() => {
+    const s = q.trim();
+    if (s.length < 2) { setMatches([]); setSearching(false); return; }
+    setSearching(true);
+    const id = ++reqRef.current;
+    const t = setTimeout(async () => {
+      try {
+        const r: any = await api.searchTracksForPreview(s, 8);
+        if (id !== reqRef.current) return;
+        const list: PreviewTrack[] = r?.tracks || [];
+        setMatches(list.filter((m) => !sel.some((x) => x.id === m.id)));
+      } catch {
+        if (id === reqRef.current) setMatches([]);
+      } finally {
+        if (id === reqRef.current) setSearching(false);
+      }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q, sel]);
+
+  const addTrack = (t: PreviewTrack) => {
+    setSel((prev) => (prev.some((x) => x.id === t.id) || prev.length >= PREVIEW_MAX ? prev : [...prev, t]));
+    setQ('');
+  };
+  const removeTrack = (id: number) => setSel((prev) => prev.filter((x) => x.id !== id));
+
+  const addRandom = async () => {
+    setAdding(true);
+    try {
+      const r: any = await api.randomTracksForPreview(20);
+      const list: PreviewTrack[] = r?.tracks || [];
+      setSel((prev) => {
+        const have = new Set(prev.map((x) => x.id));
+        return [...prev, ...list.filter((t) => !have.has(t.id))].slice(0, PREVIEW_MAX);
+      });
+    } catch (e: any) { setFormError(e?.message || String(e)); }
+    finally { setAdding(false); }
+  };
+
+  const runPreview = async () => {
+    if (!query.trim() || sel.length === 0) return;
+    setPreviewing(true); setPreviewError(''); setPreview(null);
+    try {
+      const r: any = await api.previewClassifier({
+        query: query.trim(),
+        field_type: fieldType || null,
+        track_ids: sel.map((t) => t.id),
+      });
+      setPreview(r);
+    } catch (e: any) { setPreviewError(e?.message || String(e)); }
+    finally { setPreviewing(false); }
+  };
+
+  const stats = isEdit ? classifier!.stats : undefined;
+  const hasValues = !!stats && (stats.current + stats.stale) > 0;
+  const redefined = isEdit && (query.trim() !== classifier!.query || (fieldType !== '' && fieldType !== (classifier!.field_type || '')));
+  const willRerun = hasValues && redefined;
+
+  const save = async () => {
+    if (!name.trim() || !query.trim()) { setFormError('Name and definition are required.'); return; }
+    setSaving(true); setFormError('');
+    try {
+      if (isEdit) {
+        const body: { name?: string; query?: string; field_type?: string } = {};
+        if (name.trim() !== classifier!.name) body.name = name.trim();
+        if (query.trim() !== classifier!.query) body.query = query.trim();
+        if (fieldType !== (classifier!.field_type || '')) body.field_type = fieldType;
+        await api.updateClassifier(classifier!.id, body);
+        onSaved('Saved "' + name.trim() + '"' + (willRerun
+          ? ' — definition changed: all ' + (stats!.current + stats!.stale).toLocaleString() + ' stored values are now stale and will be re-classified automatically.'
+          : '.'));
+      } else {
+        await api.createClassifier({ name: name.trim(), query: query.trim(), ...(fieldType ? { field_type: fieldType } : {}) });
+        onSaved('Classifier "' + name.trim() + '" created — the job manager will pick it up automatically.');
+      }
+      onClose();
+    } catch (e: any) { setFormError(e?.message || String(e)); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <Dialog open onClose={onClose} fullWidth maxWidth="md">
+      <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <SmartToyIcon fontSize="medium" />
+        <span>{isEdit ? 'Edit classifier — ' + classifier!.name : 'New classifier'}</span>
+        <Box sx={{ flexGrow: 1 }} />
+        <IconButton onClick={onClose} aria-label="close dialog"><CloseIcon /></IconButton>
+      </DialogTitle>
+      <DialogContent dividers>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <Box sx={{ display: 'flex', gap: 1.5 }}>
+            <TextField size="small" label="Name" value={name} onChange={(e) => setName(e.target.value)} sx={{ width: 220 }}
+              inputProps={{ 'aria-label': 'classifier name' }} />
+            <TextField size="small" select label="Field type" value={fieldType}
+              SelectProps={{ displayEmpty: true }}
+              onChange={(e) => setFieldType(e.target.value)} sx={{ width: 200 }}>
+              {(isEdit && classifier!.field_type) ? null : <MenuItem value="">Auto (LLM infers)</MenuItem>}
+              <MenuItem value="boolean">boolean</MenuItem>
+              <MenuItem value="string">string</MenuItem>
+              <MenuItem value="number">number</MenuItem>
+              <MenuItem value="datetime">datetime</MenuItem>
+            </TextField>
+          </Box>
+          <TextField size="small" label="Definition (what the LLM is asked per track)" multiline minRows={2}
+            value={query} onChange={(e) => setQuery(e.target.value)}
+            inputProps={{ 'aria-label': 'classifier definition' }} />
+          {willRerun ? (
+            <Alert severity="warning" sx={{ py: 0.5 }}>
+              This redefines the classifier — all {(stats!.current + stats!.stale).toLocaleString()} stored values will be
+              marked stale and re-classified automatically (a job appears in the table below).
+            </Alert>
+          ) : null}
+
+          <Divider sx={{ my: 0.5 }}>
+            <Typography variant="caption" color="text.secondary">
+              Preview — try it on a few tracks first (calls the model; nothing is saved)
+            </Typography>
+          </Divider>
+
+          <Box>
+            <Typography variant="caption" color="text.secondary">{sel.length} / {PREVIEW_MAX} tracks selected</Typography>
+            {sel.length > 0 ? (
+              <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 0.5, mt: 0.5, maxHeight: 140, overflow: 'auto' }}>
+                {sel.map((t) => (
+                  <Box key={t.id} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, py: 0.25 }}>
+                    <Typography variant="body2" noWrap sx={{ flexGrow: 1 }}>{trackLabel(t)}</Typography>
+                    <IconButton size="small" onClick={() => removeTrack(t.id)} aria-label={'remove ' + t.name}>
+                      <CloseIcon fontSize="inherit" />
+                    </IconButton>
+                  </Box>
+                ))}
+              </Box>
+            ) : (
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                Add tracks below (search or random) to preview this definition.
+              </Typography>
+            )}
+          </Box>
+
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start' }}>
+            <TextField size="small" placeholder="Search tracks (title, artist, album)…" value={q}
+              onChange={(e) => setQ(e.target.value)} sx={{ flexGrow: 1 }}
+              InputProps={{ startAdornment: <SearchIcon fontSize="small" sx={{ ml: 1, opacity: 0.5 }} /> }}
+              inputProps={{ 'aria-label': 'search tracks for preview' }} />
+            <Button size="small" variant="outlined" startIcon={<ShuffleIcon />} onClick={addRandom}
+              disabled={adding || sel.length >= PREVIEW_MAX}>
+              Add 20 random
+            </Button>
+          </Box>
+          {matches.length > 0 ? (
+            <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 0.5 }}>
+              {matches.map((t) => (
+                <Box key={t.id} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, py: 0.25 }}>
+                  <Typography variant="body2" noWrap sx={{ flexGrow: 1 }}>{trackLabel(t)}</Typography>
+                  <Button size="small" onClick={() => addTrack(t)} disabled={sel.length >= PREVIEW_MAX}>add</Button>
+                </Box>
+              ))}
+            </Box>
+          ) : searching ? (
+            <Typography variant="caption" color="text.secondary">searching…</Typography>
+          ) : null}
+
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+            <Button variant="contained" size="small" startIcon={<PlayArrowIcon />} onClick={runPreview}
+              disabled={!query.trim() || sel.length === 0 || previewing}>
+              {previewing ? 'Classifying…' : 'Run preview on ' + sel.length + ' track' + (sel.length === 1 ? '' : 's')}
+            </Button>
+            {preview ? (
+              <Typography variant="caption" color="text.secondary">
+                {preview.results.length} results · type {preview.field_type}{preview.inferred ? ' (inferred)' : ''} · {(preview.elapsed_ms / 1000).toFixed(1)}s
+              </Typography>
+            ) : null}
+          </Box>
+          {previewError ? <Alert severity="error" onClose={() => setPreviewError('')}>{previewError}</Alert> : null}
+          {previewing ? (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, py: 1 }}>
+              <CircularProgress size={18} />
+              <Typography variant="body2">Asking the model — up to a minute for {sel.length} tracks…</Typography>
+            </Box>
+          ) : null}
+          {preview && preview.results && preview.results.length > 0 ? (
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Track</TableCell>
+                  <TableCell sx={{ width: 90 }}>Value</TableCell>
+                  <TableCell>Why</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {preview.results.map((r: PreviewResult) => (
+                  <TableRow key={r.track_id}>
+                    <TableCell><Typography variant="body2" noWrap sx={{ maxWidth: 300 }}>{trackLabel(r)}</Typography></TableCell>
+                    <TableCell>{valueCell(r.value, r.value_ok)}</TableCell>
+                    <TableCell><Typography variant="caption" color="text.secondary">{r.reason || '—'}</Typography></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : null}
+        </Box>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, py: 2 }}>
+        {formError ? <Typography variant="caption" color="error" sx={{ mr: 'auto' }}>{formError}</Typography> : null}
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant="contained" onClick={save} disabled={saving}>
+          {saving ? <CircularProgress size={16} color="inherit" /> : (isEdit ? 'Save changes' : 'Create')}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
 export default function Classifiers() {
   const [classifiers, setClassifiers] = useState<Classifier[]>([]);
   const [jobs, setJobs] = useState<ClassifierJob[]>([]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(true);
-
-  const [name, setName] = useState('');
-  const [query, setQuery] = useState('');
-  const [fieldType, setFieldType] = useState('');
-  const [creating, setCreating] = useState(false);
+  const [modal, setModal] = useState<null | { mode: 'create' } | { mode: 'edit'; classifier: Classifier }>(null);
 
   const refresh = useCallback(() => {
     Promise.all([api.classifiers(), api.classifierJobs()])
@@ -68,18 +344,6 @@ export default function Classifiers() {
     const iv = setInterval(refresh, 8000);
     return () => clearInterval(iv);
   }, [refresh]);
-
-  const create = async () => {
-    if (!name.trim() || !query.trim()) { setNotice('Name and definition are required.'); return; }
-    setCreating(true); setError('');
-    try {
-      await api.createClassifier({ name: name.trim(), query: query.trim(), ...(fieldType ? { field_type: fieldType } : {}) });
-      setNotice('Classifier "' + name.trim() + '" created — the job manager will pick it up automatically.');
-      setName(''); setQuery(''); setFieldType('');
-      refresh();
-    } catch (e: any) { setError(e?.message || String(e)); }
-    finally { setCreating(false); }
-  };
 
   const enqueueAll = async (cid: number) => {
     setError('');
@@ -115,41 +379,20 @@ export default function Classifiers() {
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1 }}>
         <SmartToyIcon color="primary" />
         <Typography variant="h5" sx={{ flexGrow: 1 }}>AI Classifiers</Typography>
+        <Button variant="contained" startIcon={<AddIcon />} onClick={() => setModal({ mode: 'create' })} size="small">
+          New classifier
+        </Button>
         <Button startIcon={<RefreshIcon />} onClick={refresh} size="small">Refresh</Button>
       </Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 900 }}>
         A classifier is a natural-language question about your music. Its answer is pre-computed for every
         track by a background batch job (chunked LLM calls, strict JSON schema), and then shows up on the
-        Search page as a regular instant filter. Editing a definition marks all existing values stale and
-        the jobs below re-run automatically. New tracks are picked up automatically too.
+        Search page as a regular instant filter. You can preview a definition on a few tracks before saving;
+        editing a definition marks all existing values stale and the jobs below re-run automatically.
       </Typography>
 
       {error ? <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>{error}</Alert> : null}
       {notice ? <Alert severity="success" sx={{ mb: 2 }} onClose={() => setNotice('')}>{notice}</Alert> : null}
-
-      <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-        <Typography variant="subtitle1" sx={{ mb: 1 }}>Add new classifier</Typography>
-        <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-          <TextField size="small" label="Name" value={name} onChange={(e) => setName(e.target.value)} sx={{ width: 180 }}
-            placeholder="e.g. Mexican" inputProps={{ 'aria-label': 'classifier name' }} />
-          <TextField size="small" label="Definition (what the LLM is asked)" value={query} onChange={(e) => setQuery(e.target.value)} sx={{ flexGrow: 1, minWidth: 320 }}
-            placeholder="e.g. music that is mexican, mexican-inspired, or by a mexican artist" inputProps={{ 'aria-label': 'classifier definition' }} />
-          <TextField size="small" select label="Field type" value={fieldType} onChange={(e) => setFieldType(e.target.value)} sx={{ width: 190 }}>
-            <MenuItem value="">Auto (LLM infers)</MenuItem>
-            <MenuItem value="boolean">boolean</MenuItem>
-            <MenuItem value="string">string</MenuItem>
-            <MenuItem value="number">number</MenuItem>
-            <MenuItem value="datetime">datetime</MenuItem>
-          </TextField>
-          <Button variant="contained" startIcon={<AddIcon />} onClick={create} disabled={creating}>
-            {creating ? <CircularProgress size={16} color="inherit" /> : 'Create'}
-          </Button>
-        </Box>
-        <Typography variant="caption" color="text.secondary">
-          If the type is left to Auto, a small first-pass LLM call decides it before any batch run. Values can
-          be string, boolean, number, or datetime — the type may change across revisions without a migration.
-        </Typography>
-      </Paper>
 
       <Paper variant="outlined">
         <TableContainer>
@@ -183,9 +426,14 @@ export default function Classifiers() {
                     <TableCell align="center">{s.stale ? <Chip size="small" color="warning" label={s.stale.toLocaleString()} /> : '0'}</TableCell>
                     <TableCell align="center">{s.unclassified?.toLocaleString()}</TableCell>
                     <TableCell align="right">
-                      <Button size="small" startIcon={<PlayArrowIcon />} onClick={() => enqueueAll(c.id)} disabled={!c.field_type}>
-                        Classify all
-                      </Button>
+                      <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'flex-end' }}>
+                        <Button size="small" startIcon={<EditIcon />} onClick={() => setModal({ mode: 'edit', classifier: c })}>
+                          Edit
+                        </Button>
+                        <Button size="small" startIcon={<PlayArrowIcon />} onClick={() => enqueueAll(c.id)} disabled={!c.field_type}>
+                          Classify all
+                        </Button>
+                      </Box>
                     </TableCell>
                   </TableRow>
                 );
@@ -278,6 +526,15 @@ export default function Classifiers() {
           </Table>
         </TableContainer>
       </Paper>
+
+      {modal ? (
+        <ClassifierModal
+          mode={modal.mode}
+          classifier={modal.mode === 'edit' ? modal.classifier : undefined}
+          onClose={() => setModal(null)}
+          onSaved={(msg) => { setNotice(msg); refresh(); }}
+        />
+      ) : null}
     </Box>
   );
 }

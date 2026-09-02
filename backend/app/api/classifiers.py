@@ -46,6 +46,12 @@ class ExplainIn(BaseModel):
     track_id: int
 
 
+class PreviewIn(BaseModel):
+    query: str
+    field_type: str | None = None  # omitted -> infer via a 1st-pass LLM call (same as create)
+    track_ids: list[int]
+
+
 # ---------------------------------------------------------------------------
 # value handling (loose JSON storage, strict validation at write time)
 # ---------------------------------------------------------------------------
@@ -129,6 +135,31 @@ def _track_line(i: int, t: Track) -> str:
             f"duration_s={dur_s} language={t.language or '?'}")
 
 
+def _artists_list(t: Track) -> list[str]:
+    try:
+        return [a.get("name", "") for a in json.loads(t.artists or "[]") if isinstance(a, dict)]
+    except (json.JSONDecodeError, AttributeError):
+        return []
+
+
+def _system_prompt(query: str, field_type: str) -> str:
+    schema = schema_for(field_type)
+    return (
+        "You are a strict metadata classifier. You receive one classification question "
+        "and a numbered list of music tracks. For EACH track, decide its value for the "
+        "question using only the metadata shown. Respond with JSON matching EXACTLY this "
+        "schema:\n" + json.dumps(schema, indent=1) +
+        "\nRules: include one entry per track index, never skip an index; the value type "
+        "must match the schema; keep 'reason' to one short clause; if the metadata is "
+        "inconclusive, still answer your best judgment."
+    )
+
+
+def _track_out(t: Track) -> dict:
+    return {"id": t.id, "name": t.name, "artists": _artists_list(t),
+            "album_name": t.album_name, "release_date": (t.release_date or None)}
+
+
 def run_classifier_pass(cls: Classifier, playlist_id: int | None = None,
                         limit: int = 100, offset: int = 0,
                         db=None, job=None) -> dict:
@@ -159,15 +190,7 @@ def run_classifier_pass(cls: Classifier, playlist_id: int | None = None,
 
         llm = InferenceAdapter()
         schema = schema_for(cls.field_type)
-        system = (
-            "You are a strict metadata classifier. You receive one classification question "
-            "and a numbered list of music tracks. For EACH track, decide its value for the "
-            "question using only the metadata shown. Respond with JSON matching EXACTLY this "
-            "schema:\n" + json.dumps(schema, indent=1) +
-            "\nRules: include one entry per track index, never skip an index; the value type "
-            "must match the schema; keep 'reason' to one short clause; if the metadata is "
-            "inconclusive, still answer your best judgment."
-        )
+        system = _system_prompt(cls.query, cls.field_type)
 
         done = ok = failed = 0
         for i in range(0, len(tracks), CHUNK_SIZE):
@@ -436,3 +459,134 @@ def explain_value(cid: int, body: ExplainIn):
     return {"classifier_id": c.id, "classifier": c.name, "query": c.query,
             "field_type": c.field_type, "value": value,
             "recorded_reason": recorded_reason, "explanation": explanation}
+
+
+# ---------------------------------------------------------------------------
+# Preview: run a (possibly unsaved) query on a chosen set of tracks WITHOUT
+# storing anything. This is the "try it before you commit it" path for the
+# add/edit modal - same prompt, schema, chunking and retries as the batch
+# pass, but results go straight back to the UI.
+# ---------------------------------------------------------------------------
+
+PREVIEW_MAX_TRACKS = 50  # 2 LLM calls max - keep it a preview, not a batch
+
+
+@router.post("/preview")
+def preview_classifier(body: PreviewIn):
+    query = body.query.strip()
+    if not query:
+        raise HTTPException(422, "query is required")
+    if not body.track_ids:
+        raise HTTPException(422, "track_ids is required")
+    if len(body.track_ids) > PREVIEW_MAX_TRACKS:
+        raise HTTPException(422, f"preview is capped at {PREVIEW_MAX_TRACKS} tracks (2 LLM calls)")
+    field_type = body.field_type
+    inferred = False
+    if field_type is not None and field_type not in FIELD_TYPES:
+        raise HTTPException(422, f"field_type must be one of {list(FIELD_TYPES)}")
+
+    db = SessionLocal()
+    try:
+        tracks = db.query(Track).filter(Track.id.in_(body.track_ids)).order_by(Track.id).all()
+    finally:
+        db.close()
+    if not tracks:
+        raise HTTPException(404, "No matching tracks")
+
+    if field_type is None:
+        # same 1st-pass inference as create; if it fails, ask for an explicit type
+        try:
+            llm = InferenceAdapter()
+            content = llm.chat_structured([
+                {"role": "system", "content": (
+                    "You decide the answer type for a track-classification question. "
+                    "Respond with JSON: {\"field_type\": <one of: boolean, string, number, datetime>, "
+                    "\"reason\": \"short\"}. boolean = yes/no per track; string = a label/phrase; "
+                    "number = a numeric score; datetime = a date.")},
+                {"role": "user", "content": f"Question: {query}"},
+            ], {"type": "object", "properties": {"field_type": {"type": "string"}, "reason": {"type": "string"}}})
+            ft = (json.loads(content).get("field_type") or "").strip().lower()
+            if ft in FIELD_TYPES:
+                field_type, inferred = ft, True
+        except Exception:
+            pass
+        if field_type is None:
+            raise HTTPException(422, "Could not infer the field type - pick one explicitly")
+
+    t0 = time.time()
+    llm = InferenceAdapter()
+    schema = schema_for(field_type)
+    system = _system_prompt(query, field_type)
+    results = []
+    try:
+        for i in range(0, len(tracks), CHUNK_SIZE):
+            chunk = tracks[i:i + CHUNK_SIZE]
+            lines = "\n".join(_track_line(j, t) for j, t in enumerate(chunk))
+            user = f"Classification question: {query}\n\nTracks:\n{lines}"
+            data = None
+            for attempt in range(1, CHUNK_RETRIES + 1):
+                try:
+                    content = llm.chat_structured([
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ], schema)
+                    data = json.loads(content)
+                    break
+                except Exception as e:
+                    if attempt >= CHUNK_RETRIES:
+                        raise
+                    logger.warning("preview chunk %d attempt %d/%d failed: %s - retrying in %ds",
+                                   i // CHUNK_SIZE, attempt, CHUNK_RETRIES, str(e)[:150], CHUNK_RETRY_WAIT)
+                    time.sleep(CHUNK_RETRY_WAIT)
+            entries = {e.get("index"): e for e in (data.get("results") or []) if isinstance(e, dict)}
+            for j, t in enumerate(chunk):
+                e = entries.get(j)
+                good, val = validate_value(field_type, e.get("value") if e is not None else None)
+                results.append({
+                    "track_id": t.id, "name": t.name, "artists": _artists_list(t),
+                    "value": val if good else None, "value_ok": good and e is not None,
+                    "reason": str(e.get("reason") or "")[:300] if e is not None else "",
+                })
+    except Exception as e:
+        raise HTTPException(502, f"Preview unavailable (LLM): {str(e)[:200]}")
+    return {"query": query, "field_type": field_type, "inferred": inferred,
+            "results": results, "chunks": (len(tracks) + CHUNK_SIZE - 1) // CHUNK_SIZE,
+            "elapsed_ms": int((time.time() - t0) * 1000)}
+
+
+@router.get("/track-search")
+def track_search(q: str = "", limit: int = 8):
+    """Picker search for the preview modal: substring match over title,
+    artists, album (case-insensitive). Bounded, no ranking - a picker, not
+    the search page."""
+    q = q.strip()
+    if not q:
+        return {"tracks": []}
+    limit = max(1, min(limit, 25))
+    like = f"%{q.lower()}%"
+    db = SessionLocal()
+    try:
+        rows = db.query(Track).filter(
+            func.lower(Track.name).like(like),
+        ).union(
+            db.query(Track).filter(func.lower(Track.artists).like(like)),
+        ).union(
+            db.query(Track).filter(
+                Track.album_name.isnot(None),
+                func.lower(Track.album_name).like(like)),
+        ).limit(limit).all()
+        return {"tracks": [_track_out(t) for t in rows]}
+    finally:
+        db.close()
+
+
+@router.get("/random-tracks")
+def random_tracks(limit: int = 20):
+    """Random sample of tracks for the preview modal (ORDER BY RANDOM())."""
+    limit = max(1, min(limit, PREVIEW_MAX_TRACKS))
+    db = SessionLocal()
+    try:
+        rows = db.query(Track).order_by(func.random()).limit(limit).all()
+        return {"tracks": [_track_out(t) for t in rows]}
+    finally:
+        db.close()

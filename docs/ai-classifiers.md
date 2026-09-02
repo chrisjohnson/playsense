@@ -171,6 +171,28 @@ seconds per call that's a background job of minutes to an hour — fine for a
 nightly/batch system, absurd for a keystroke. This is the core reason the
 search page itself never calls the model.
 
+### 4.1 Add/edit modal + preview
+
+The AI Classifiers page manages classifiers in a modal (add and edit share
+the same dialog):
+
+- **Preview before you commit.** The dialog has a track picker (fuzzy
+  search over title/artists/album via `GET /classifiers/track-search`,
+  plus "Add 20 random" via `GET /classifiers/random-tracks`, capped at 50
+  tracks = 2 LLM calls). "Run preview" posts the (possibly UNSAVED) query
+  + field type + track ids to `POST /classifiers/preview`, which runs the
+  same prompt/schema/chunk/retry pipeline as the batch pass but stores
+  nothing and returns value + reason per track. If the field type is left
+  on "Auto", the same 1st-pass type inference as create runs first and the
+  inferred type is shown in the results.
+- **Edit = redefinition.** `PUT /classifiers/{id}` bumps `revision` when
+  the query or field type changes (a rename alone does not — the stored
+  values are still answers to the same question); the revision bump is
+  exactly what makes every stored value stale, and the auto-scan then
+  re-enqueues the scope (a revision bump also lifts a cancelled-job
+  pause). The modal warns with the exact count of values that will be
+  re-classified before you save.
+
 ## 5. Search page (instant, 0% LLM)
 
 - On playlist select: one GET of all tracks **with their classifications**
