@@ -102,7 +102,10 @@ const theme = createTheme({
             fontSize: '0.7rem',
             textTransform: 'uppercase',
             letterSpacing: '0.07em',
-            backgroundColor: 'rgba(255,255,255,0.02)',
+            // OPAQUE on purpose: the old 2%-white tint let scrolled rows show
+            // through the sticky Search header (a 2% white blend over the
+            // #15181d paper, computed to the same look)
+            backgroundColor: '#1a1d22',
           },
         },
       },

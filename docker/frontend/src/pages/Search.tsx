@@ -40,7 +40,7 @@ import { rememberSearchQuery, lastSearchQuery } from '../searchParams';
 
 interface Props { authed: boolean; }
 
-type SortKey = 'name' | 'year' | 'duration';
+type SortKey = 'name' | 'artists' | 'album' | 'language' | 'year' | 'duration' | `ai${number}`;
 
 // ---------------------------------------------------------------------------
 // Fuzzy matching (client-side, instant): every query token must appear in the
@@ -212,7 +212,9 @@ export default function Search({ authed }: Props) {
   const [rows, setRows] = useState(() => Number(new URLSearchParams(initialQuery()).get('rs') || 50) || 50);
   const [sortKey, setSortKey] = useState<SortKey>(() => {
     const v = new URLSearchParams(initialQuery()).get('sk');
-    return v === 'year' || v === 'duration' ? v : 'name';
+    if (v === 'name' || v === 'artists' || v === 'album' || v === 'language' || v === 'year' || v === 'duration') return v;
+    if (v && /^ai\d+$/.test(v)) return v as SortKey;
+    return 'name';
   });
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() =>
     new URLSearchParams(initialQuery()).get('sd') === 'desc' ? 'desc' : 'asc');
@@ -369,13 +371,32 @@ export default function Search({ authed }: Props) {
   }, [indexed, q, f, activeClassifiers]);
 
   const sorted = useMemo(() => {
-    const keyFn = (x: { t: Track }) =>
-      sortKey === 'name' ? (x.t.name || '').toLowerCase()
-        : sortKey === 'year' ? yearOf(x.t)
-          : (x.t.duration_ms || 0);
+    // null = no usable value (AI column: not classified yet or stale) - those
+    // rows always sort last, in either direction.
+    const keyFn = (x: { t: Track }): string | number | null => {
+      if (sortKey === 'name') return (x.t.name || '').toLowerCase();
+      if (sortKey === 'artists') return (x.t.artists || []).map((a) => a.name).join(', ').toLowerCase();
+      if (sortKey === 'album') return (x.t.album_name || '').toLowerCase();
+      if (sortKey === 'language') return (x.t.language || '').toLowerCase();
+      if (sortKey === 'year') return yearOf(x.t);
+      if (sortKey === 'duration') return x.t.duration_ms || 0;
+      const m = sortKey.match(/^ai(\d+)$/);
+      if (m) {
+        const v = x.t.classifications?.[m[1]];
+        if (!v || v.stale) return null;
+        if (typeof v.value === 'boolean') return v.value ? 1 : 0;
+        if (typeof v.value === 'number') return v.value;
+        return String(v.value).toLowerCase();
+      }
+      return '';
+    };
     return [...filtered].sort((a, b) => {
       const av = keyFn(a), bv = keyFn(b);
-      return (av < bv ? -1 : av > bv ? 1 : 0) * (sortDir === 'asc' ? 1 : -1);
+      if (av === null && bv === null) return 0;
+      if (av === null) return 1;
+      if (bv === null) return -1;
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      return cmp * (sortDir === 'asc' ? 1 : -1);
     });
   }, [filtered, sortKey, sortDir]);
 
@@ -586,17 +607,30 @@ export default function Search({ authed }: Props) {
                     <TableCell sortDirection={sortKey === 'name' ? sortDir : false}>
                       <TableSortLabel active={sortKey === 'name'} direction={sortDir} onClick={() => toggleSort('name')}>Title</TableSortLabel>
                     </TableCell>
-                    <TableCell>Artists</TableCell>
-                    <TableCell>Album</TableCell>
+                    <TableCell sortDirection={sortKey === 'artists' ? sortDir : false}>
+                      <TableSortLabel active={sortKey === 'artists'} direction={sortDir} onClick={() => toggleSort('artists')}>Artists</TableSortLabel>
+                    </TableCell>
+                    <TableCell sortDirection={sortKey === 'album' ? sortDir : false}>
+                      <TableSortLabel active={sortKey === 'album'} direction={sortDir} onClick={() => toggleSort('album')}>Album</TableSortLabel>
+                    </TableCell>
                     <TableCell sortDirection={sortKey === 'year' ? sortDir : false}>
                       <TableSortLabel active={sortKey === 'year'} direction={sortDir} onClick={() => toggleSort('year')}>Year</TableSortLabel>
                     </TableCell>
-                    <TableCell>Lang</TableCell>
-                    {activeClassifiers.map((c) => (
-                      <TableCell key={c.id} align="center">
-                        <Tooltip title={c.query}><Typography variant="caption">{c.name} (AI)</Typography></Tooltip>
-                      </TableCell>
-                    ))}
+                    <TableCell sortDirection={sortKey === 'language' ? sortDir : false}>
+                      <TableSortLabel active={sortKey === 'language'} direction={sortDir} onClick={() => toggleSort('language')}>Lang</TableSortLabel>
+                    </TableCell>
+                    {activeClassifiers.map((c) => {
+                      const sk = 'ai' + c.id as SortKey;
+                      return (
+                        <TableCell key={c.id} align="center" sortDirection={sortKey === sk ? sortDir : false}>
+                          <Tooltip title={c.query}>
+                            <TableSortLabel active={sortKey === sk} direction={sortDir} onClick={() => toggleSort(sk)}>
+                              {c.name} (AI)
+                            </TableSortLabel>
+                          </Tooltip>
+                        </TableCell>
+                      );
+                    })}
                   </TableRow>
                 </TableHead>
                 <TableBody>
