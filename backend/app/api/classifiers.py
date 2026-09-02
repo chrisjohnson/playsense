@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
@@ -11,10 +13,15 @@ from ..db import SessionLocal
 from ..models import Track, Classifier, TrackClassification
 from ..inference.adapter import InferenceAdapter
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/classifiers", tags=["classifiers"])
 
 FIELD_TYPES = ("boolean", "string", "number", "datetime")
 CHUNK_SIZE = 25  # tracks per LLM call - keeps prompts small (see design doc §4)
+CHUNK_RETRIES = 3   # attempts per chunk before the pass fails
+CHUNK_RETRY_WAIT = 15  # seconds between attempts - medium-moe flaps clear in seconds,
+                       # sustained outages fall through to the job-level 5-min backoff
 
 
 class ClassifierIn(BaseModel):
@@ -123,12 +130,19 @@ def _track_line(i: int, t: Track) -> str:
 
 
 def run_classifier_pass(cls: Classifier, playlist_id: int | None = None,
-                        limit: int = 100, offset: int = 0) -> dict:
+                        limit: int = 100, offset: int = 0,
+                        db=None, job=None) -> dict:
     """Classify up to `limit` tracks that lack a CURRENT value for this
     classifier (stale = older revision counts as needing work). Synchronous
     bounded pass; returns progress. Raises on LLM failure after the partial
-    work is committed (per-chunk upserts survive)."""
-    db = SessionLocal()
+    work is committed (per-chunk upserts survive).
+
+    db/job: when the job manager calls this it passes its own session and job
+    row so progress is applied per chunk (live UI stream) and a mid-pass
+    restart loses no count. The /run endpoint omits both."""
+    owns_db = db is None
+    if owns_db:
+        db = SessionLocal()
     try:
         if cls.field_type is None:
             raise HTTPException(409, "Classifier has no field_type yet; infer or set it first.")
@@ -157,24 +171,41 @@ def run_classifier_pass(cls: Classifier, playlist_id: int | None = None,
 
         done = ok = failed = 0
         for i in range(0, len(tracks), CHUNK_SIZE):
+            chunk_ok = chunk_failed = 0
             chunk = tracks[i:i + CHUNK_SIZE]
             lines = "\n".join(_track_line(j, t) for j, t in enumerate(chunk))
             user = f"Classification question: {cls.query}\n\nTracks:\n{lines}"
-            content = llm.chat_structured([
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ], schema)
-            data = json.loads(content)
+            # Chunk-level retry: the model flaps (HTTP 500 / empty content /
+            # malformed JSON) on single calls. A quick inline retry clears the
+            # blip without idling the whole job for the 5-min backoff; if all
+            # attempts fail the pass raises and the job-level backoff takes over.
+            data = None
+            for attempt in range(1, CHUNK_RETRIES + 1):
+                try:
+                    content = llm.chat_structured([
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ], schema)
+                    data = json.loads(content)
+                    break
+                except Exception as e:
+                    if attempt >= CHUNK_RETRIES:
+                        raise
+                    logger.warning("classifier %s chunk %d attempt %d/%d failed: %s - retrying in %ds",
+                                   cls.id, i // CHUNK_SIZE, attempt, CHUNK_RETRIES, str(e)[:150], CHUNK_RETRY_WAIT)
+                    time.sleep(CHUNK_RETRY_WAIT)
             entries = {e.get("index"): e for e in (data.get("results") or []) if isinstance(e, dict)}
             for j, t in enumerate(chunk):
                 done += 1
                 e = entries.get(j)
                 if e is None:
                     failed += 1
+                    chunk_failed += 1
                     continue
                 good, val_json = validate_value(cls.field_type, e.get("value"))
                 if not good:
                     failed += 1
+                    chunk_failed += 1
                     continue
                 row = db.query(TrackClassification).filter_by(
                     track_id=t.id, classifier_id=cls.id).first()
@@ -186,11 +217,18 @@ def run_classifier_pass(cls: Classifier, playlist_id: int | None = None,
                 row.reason = str(e.get("reason") or "")[:300]
                 row.classified_at = datetime.utcnow()
                 ok += 1
+                chunk_ok += 1
+            if job is not None:
+                # apply progress in the SAME transaction as the rows, so the
+                # job count and the data never disagree (and survive restarts)
+                job.done = (job.done or 0) + chunk_ok
+                job.failed = (job.failed or 0) + chunk_failed
             db.commit()  # per-chunk commit: partial work survives LLM failures
         return {"requested": limit, "processed": len(tracks), "classified": ok,
                 "failed": failed, "done": done}
     finally:
-        db.close()
+        if owns_db:
+            db.close()
 
 
 # ---------------------------------------------------------------------------

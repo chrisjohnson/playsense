@@ -16,9 +16,22 @@ router = APIRouter(prefix="/classifier-jobs", tags=["classifier-jobs"])
 TERMINAL = {"done", "error", "cancelled"}
 
 
+def _state(j: ClassifierJob) -> str:
+    """Human-facing state. In this manager an `error` job is never actually
+    broken: _fail() always schedules a retry_after, and _retry_errors() puts
+    it back in the queue. So `error` + retry_after reads as 'retrying' (this
+    step hit a transient failure and is auto-resuming), not 'failed'. A
+    terminal `error` (no retry_after) is effectively unreachable today but is
+    kept distinct in case that ever changes."""
+    if j.status == "error":
+        return "retrying" if j.retry_after else "failed"
+    return j.status
+
+
 def _out(j: ClassifierJob) -> dict:
     return {
         "id": j.id,
+        "state": _state(j),
         "classifier_id": j.classifier_id,
         "classifier_name": j.classifier.name if j.classifier else None,
         "playlist_id": j.playlist_id,
@@ -108,6 +121,7 @@ def retry_job(job_id: int, db=Depends(get_db)):
         raise HTTPException(409, f"Only error/cancelled jobs can be retried (status={job.status})")
     job.status = "queued"
     job.retry_after = None
+    job.error = None  # fresh attempt: don't show the old failure while queued/running
     db.commit()
     return _out(job)
 

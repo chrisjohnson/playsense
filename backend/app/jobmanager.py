@@ -111,14 +111,16 @@ def _has_running_job(db, classifier_id: int, playlist_id: int) -> bool:
 
 def _summarize_error(msg: str) -> str:
     """Raw LLM/transport errors are litellm JSON blobs; the UI shows this,
-    so keep it short and actionable."""
+    so keep it short and cause-only (the UI adds the retry schedule itself)."""
     m = (msg or "").lower()
-    if "inference 5" in m or "connection error" in m or "connect" in m and "refused" in m:
-        return "LLM unreachable (model backend down) - retrying automatically"
+    if "empty content" in m:
+        return "LLM returned an empty response"
+    if "inference 5" in m or "connection error" in m or ("connect" in m and "refused" in m):
+        return "LLM unreachable (model backend down)"
     if "inference 4" in m:
-        return "LLM rejected the request (HTTP 4xx) - check model config, retrying"
+        return "LLM rejected the request (HTTP 4xx) - check model config"
     if "timeout" in m:
-        return "LLM timed out - retrying automatically"
+        return "LLM timed out"
     return (msg or "unknown error")[:300]
 
 
@@ -159,14 +161,16 @@ def _step_job(db) -> None:
         return
 
     try:
-        res = run_classifier_pass(cls, playlist_id=job.playlist_id, limit=PASS_SIZE, offset=0)
+        # share the tick's session + job row so the pass can update progress
+        # per chunk (live UI stream) and a mid-pass restart loses no count
+        res = run_classifier_pass(cls, playlist_id=job.playlist_id, limit=PASS_SIZE,
+                                  offset=0, db=db, job=job)
     except HTTPException as e:
         _fail(job, str(e.detail))
     except Exception as e:
         _fail(job, f"{type(e).__name__}: {str(e)[:400]}")
     else:
-        job.done = (job.done or 0) + res["classified"]
-        job.failed = (job.failed or 0) + res["failed"]
+        # progress was applied per chunk by the pass itself
         if res["processed"] == 0:
             job.status = "done"
             job.finished_at = _now()
@@ -189,6 +193,7 @@ def _retry_errors(db) -> None:
     for j in jobs:
         j.status = "queued"
         j.retry_after = None
+        j.error = None  # fresh attempt: don't show the old failure while queued/running
         logger.info("classifier job %s back in queue after backoff", j.id)
 
 

@@ -26,6 +26,7 @@ import { api, Classifier, ClassifierJob } from '../api';
 
 const statusColor: Record<string, 'default' | 'primary' | 'success' | 'warning' | 'error'> = {
   queued: 'default', running: 'primary', cancelling: 'warning',
+  retrying: 'warning', failed: 'error',
   done: 'success', error: 'error', cancelled: 'default',
 };
 
@@ -218,17 +219,19 @@ export default function Classifiers() {
               {jobs.map((j) => {
                 const pct = j.total > 0 ? Math.min(100, Math.round((j.done / j.total) * 100)) : (j.status === 'done' ? 100 : 0);
                 const active = ['queued', 'running', 'cancelling'].includes(j.status);
+                const retrying = j.state === 'retrying';
+                const state = j.state || j.status;
                 return (
                   <TableRow key={j.id} hover>
                     <TableCell>{j.id}</TableCell>
                     <TableCell>{j.classifier_name}</TableCell>
                     <TableCell>{j.playlist_name}</TableCell>
-                    <TableCell><Chip size="small" color={statusColor[j.status]} label={j.status} /></TableCell>
+                    <TableCell><Chip size="small" color={statusColor[state] || 'default'} label={state} /></TableCell>
                     <TableCell>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         {active || j.status === 'done' ? (
                           <LinearProgress variant="determinate" value={pct} sx={{ flexGrow: 1, height: 8, borderRadius: 4 }} />
-                        ) : j.status === 'error' ? (
+                        ) : retrying ? (
                           <LinearProgress variant="indeterminate" sx={{ flexGrow: 1, height: 8 }} />
                         ) : (
                           <Box sx={{ flexGrow: 1 }} />
@@ -241,11 +244,13 @@ export default function Classifiers() {
                     <TableCell align="center">{j.failed || 0}</TableCell>
                     <TableCell align="center">{elapsed(j)}</TableCell>
                     <TableCell sx={{ maxWidth: 280 }}>
-                      {j.error ? (
+                      {(retrying || state === 'failed') && j.error ? (
                         <Box>
-                          <Typography noWrap variant="caption" color="error">{j.error}</Typography>
-                          {j.status === 'error' && j.retry_after ? (
-                            <Typography variant="caption" color="text.secondary">retrying at {new Date(j.retry_after).toLocaleTimeString()}</Typography>
+                          <Typography noWrap variant="caption" color={retrying ? 'warning.main' : 'error'}>{j.error}</Typography>
+                          {retrying && j.retry_after ? (
+                            <Typography variant="caption" color="text.secondary">
+                              auto-retrying at {new Date(j.retry_after).toLocaleTimeString()} · attempt {j.attempts + 1} · progress kept
+                            </Typography>
                           ) : null}
                         </Box>
                       ) : null}
@@ -255,10 +260,10 @@ export default function Classifiers() {
                         {active ? (
                           <Button size="small" color="warning" startIcon={<StopIcon />} onClick={() => cancel(j.id)}>Cancel</Button>
                         ) : null}
-                        {j.status === 'error' ? (
+                        {retrying || state === 'failed' ? (
                           <Button size="small" startIcon={<RefreshIcon />} onClick={() => retry(j.id)}>Retry now</Button>
                         ) : null}
-                        {['done', 'cancelled', 'error'].includes(j.status) ? (
+                        {['done', 'cancelled', 'error', 'failed'].includes(state) ? (
                           <Button size="small" onClick={() => deleteJob(j.id)}>Remove</Button>
                         ) : null}
                       </Box>

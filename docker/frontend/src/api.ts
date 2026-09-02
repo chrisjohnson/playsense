@@ -93,6 +93,9 @@ export type ClassifierJob = {
   playlist_id: number;
   playlist_name: string | null;
   status: 'queued' | 'running' | 'cancelling' | 'done' | 'error' | 'cancelled';
+  // human-facing state: 'error' + scheduled retry reads as 'retrying' (a
+  // transient step failure that auto-resumes), never 'broken'
+  state: 'queued' | 'running' | 'cancelling' | 'retrying' | 'failed' | 'done' | 'cancelled';
   total: number;
   done: number;
   failed: number;

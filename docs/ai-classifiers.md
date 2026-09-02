@@ -141,6 +141,26 @@ unit of work it runs:
 - **Resumable by construction.** A step is bounded; progress is per-chunk
   commits plus the job row. Container restarts, LLM outages, and cancels all
   leave the scope simply "still needing work".
+- **Chunk-level retry.** A single LLM call can flap (HTTP 500, empty
+  content, malformed JSON) without the model being down. Each chunk is
+  retried 3x with 15s between attempts; only if all attempts fail does the
+  pass raise and the job-level 5-min backoff take over. That is the
+  difference between riding out a 20-second blip inline and idling the whole
+  job for 5 minutes.
+- **Progress is per-chunk, not per-pass.** The manager passes its session and
+  job row into the pass, which applies `done`/`failed` in the SAME
+  transaction as each chunk's rows. The UI bar moves with every LLM call,
+  and a mid-pass container restart can no longer under-count the job (rows
+  and job count are committed together and can never disagree).
+- **Status semantics: `error` is not a failure state.** The API exposes a
+  derived `state` field: `error` + `retry_after` reads as `retrying` (this
+  step hit a transient failure and is auto-resuming, progress kept); a
+  terminal `error` (no retry) would read as `failed` (unreachable today —
+  every `_fail` schedules a retry). The UI renders `retrying` amber, never
+  red, with the schedule ("auto-retrying at HH:MM · attempt N · progress
+  kept"); the error cell is cause-only ("LLM unreachable (model backend
+  down)") and shown only while retrying/failed, so a re-queued job never
+  carries a stale failure message.
 - Manual controls: `GET /api/classifier-jobs` (progress),
   `POST /api/classifier-jobs` (enqueue one scope or all playlists),
   `POST /api/classifier-jobs/{id}/cancel`, `DELETE` for terminal jobs.
