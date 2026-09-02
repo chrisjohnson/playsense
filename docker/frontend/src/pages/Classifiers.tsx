@@ -369,6 +369,23 @@ export default function Classifiers() {
     catch (e: any) { setError(e?.message || String(e)); }
   };
 
+  // Resume a 'partial' job: re-enqueue its scope. If the work was already
+  // finished by a later run the endpoint reports no work and nothing happens.
+  const resume = async (j: any) => {
+    setError('');
+    try {
+      const r: any = await api.enqueueClassifierJob({ classifier_id: j.classifier_id, playlist_id: j.playlist_id });
+      if (r.created?.length) {
+        setNotice('Re-queued ' + j.classifier_name + ' on ' + (j.playlist_name || 'its playlist') + ' - it will classify whatever is still missing.');
+      } else if (r.skipped_playlists?.length) {
+        setNotice(j.classifier_name + ' on ' + (j.playlist_name || 'that playlist') + ' already has a job in flight - nothing to resume.');
+      } else {
+        setNotice('Re-check of ' + j.classifier_name + ': nothing left to classify - coverage is already complete.');
+      }
+      refresh();
+    } catch (e: any) { setError(e?.message || String(e)); }
+  };
+
   const deleteJob = async (jid: number) => {
     setError('');
     try { await api.deleteClassifierJob(jid); refresh(); }
@@ -479,16 +496,22 @@ export default function Classifiers() {
                 const retrying = j.state === 'retrying';
                 const state = j.state || j.status;
                 const pulse = statusPulse[state] || 'idle';
+                // 'done' but the bar isn't full: the job's own ledger ended
+                // before its original scope was exhausted (playlist changed
+                // mid-run, or a later job finished the rest). Not a failure.
+                const partial = state === 'done' && j.done < j.total;
                 return (
                   <TableRow key={j.id} hover className={pulse === 'running' ? 'dsh-row--running' : undefined}>
                     <TableCell>{j.id}</TableCell>
                     <TableCell>{j.classifier_name}</TableCell>
                     <TableCell>{j.playlist_name}</TableCell>
                     <TableCell>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <PulseDot state={pulse} />
-                        <Typography variant="body2" sx={{ fontWeight: 600, textTransform: 'capitalize', opacity: pulse === 'idle' ? 0.7 : 1 }}>{state}</Typography>
-                      </Box>
+                      <Tooltip title={partial ? 'Ended before every track of its original scope was counted (the playlist changed mid-run, or a later job picked up the rest). Coverage per classifier is in the table above; Resume re-checks and classifies anything still missing.' : ''}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <PulseDot state={partial ? 'idle' : pulse} />
+                          <Typography variant="body2" sx={{ fontWeight: 600, textTransform: 'capitalize', opacity: partial || pulse === 'idle' ? 0.7 : 1 }}>{partial ? 'partial' : state}</Typography>
+                        </Box>
+                      </Tooltip>
                     </TableCell>
                     <TableCell>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -525,6 +548,9 @@ export default function Classifiers() {
                         ) : null}
                         {retrying || state === 'failed' ? (
                           <Button size="small" startIcon={<RefreshIcon />} onClick={() => retry(j.id)}>Retry now</Button>
+                        ) : null}
+                        {partial && j.classifier_name ? (
+                          <Button size="small" startIcon={<PlayArrowIcon />} onClick={() => resume(j)}>Resume</Button>
                         ) : null}
                         {['done', 'cancelled', 'error', 'failed'].includes(state) ? (
                           <Button size="small" onClick={() => deleteJob(j.id)}>Remove</Button>
