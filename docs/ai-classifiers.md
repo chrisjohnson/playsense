@@ -111,7 +111,8 @@ unit of work it runs:
    - each track's static metadata (title, artists, album, release date,
      duration, language, genre when available), numbered,
    - a required response: one entry per track index with `value` (+ optional
-     short `reason` for booleans, surfaced in the UI on hover).
+     short one-clause `reason`, persisted to `track_classifications.reason`
+      (see §5.1).
 4. **Validate every value** against the field type. Any malformed entry
    leaves that track unclassified (it retries next pass) — the pipeline
    never stores garbage and never crashes on one bad row.
@@ -167,6 +168,24 @@ search page itself never calls the model.
   thousands of tracks. Beyond that, move the same filters to the server
   (FTS5 for the fuzzy box; the classifier values are already SQL-filterable
   via a JSON1 query) — the API shape is designed to allow that later.
+
+### 5.1 Checking the reasoning
+
+Two layers, because the cheap one is the faithful one:
+
+- **Recorded reason (instant, no LLM).** Every classification stores the
+  model's one-clause reason. It reaches the browser in the track payload
+  (`classifications[classifier_id].reason`), shows in the cell tooltip, and
+  opens in a per-track dialog when you click any classified AI cell:
+  track, question, assigned value, recorded reason.
+- **Detailed explanation (on-demand, 1 LLM call).** The dialog's "Explain in
+detail" button calls `POST /api/classifiers/{id}/explain` with the track
+  id. The endpoint re-asks the model — single track, tiny prompt, so far more
+  robust than a 25-track batch — for a 2–5 sentence plain-language
+  explanation citing the specific metadata, and returns it alongside the
+  recorded reason. It is a fresh re-derivation, not the original thought
+  process; the UI labels it "live LLM" to keep that honest. If the model is
+  down the dialog shows the clean 502 error instead of failing the page.
 
 ## 6. Dynamic playlists (later phase)
 

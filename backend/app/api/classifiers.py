@@ -35,6 +35,10 @@ class RunIn(BaseModel):
     offset: int = 0
 
 
+class ExplainIn(BaseModel):
+    track_id: int
+
+
 # ---------------------------------------------------------------------------
 # value handling (loose JSON storage, strict validation at write time)
 # ---------------------------------------------------------------------------
@@ -338,3 +342,59 @@ def run_classifier(cid: int, body: RunIn):
     except Exception as e:
         # partial work is already committed per chunk; report what failed
         raise HTTPException(502, f"Classifier run failed mid-pass: {str(e)[:300]}")
+
+
+@router.post("/{cid}/explain")
+def explain_value(cid: int, body: ExplainIn):
+    """Re-ask the LLM for a detailed, plain-language explanation of why one
+    track was assigned its stored value. A single-track call (tiny prompt), so
+    it is far more robust than the 25-track batch. The returned `explanation`
+    is a fresh re-derivation; `recorded_reason` is the short clause captured
+    at classification time (returned alongside for reference)."""
+    db = SessionLocal()
+    try:
+        c = db.get(Classifier, cid)
+        if c is None:
+            raise HTTPException(404, "Classifier not found")
+        t = db.get(Track, body.track_id)
+        if t is None:
+            raise HTTPException(404, "Track not found")
+        row = db.query(TrackClassification).filter_by(
+            track_id=t.id, classifier_id=c.id).first()
+        recorded_reason = (row.reason or "") if row else ""
+        try:
+            value = json.loads(row.value) if (row and row.value) else None
+        except (json.JSONDecodeError, TypeError):
+            value = None
+    finally:
+        db.close()
+
+    system = (
+        "You are an expert music-metadata analyst. You are given one "
+        "classification question, one music track, and the value that was "
+        "assigned to it. Explain in detail, in plain language, WHY that value "
+        "is the right answer for this track. Cite the specific metadata "
+        "(artist, album, language, era, etc.) that supports it. If the answer "
+        "was a best-judgment call under uncertainty, say so and what would "
+        "change your mind. Respond with JSON: {\"explanation\": \"2-5 sentences\"}"
+    )
+    user = (
+        f"Classification question: {c.query}\n"
+        f"Field type: {c.field_type}\n"
+        f"Assigned value: {json.dumps(value)}\n"
+        f"Track:\n{_track_line(1, t)}"
+        + (f"\nRecorded reason at classification: {recorded_reason}" if recorded_reason else "")
+    )
+    try:
+        llm = InferenceAdapter()
+        content = llm.chat([{"role": "system", "content": system},
+                            {"role": "user", "content": user}])
+        try:
+            explanation = str(json.loads(content).get("explanation") or content).strip()
+        except (json.JSONDecodeError, TypeError):
+            explanation = content.strip()
+    except Exception as e:
+        raise HTTPException(502, f"Explanation unavailable (LLM): {str(e)[:200]}")
+    return {"classifier_id": c.id, "classifier": c.name, "query": c.query,
+            "field_type": c.field_type, "value": value,
+            "recorded_reason": recorded_reason, "explanation": explanation}

@@ -36,6 +36,8 @@ export const api = {
   cancelClassifierJob: (id: number) => req(`/classifier-jobs/${id}/cancel`, { method: 'POST' }),
   retryClassifierJob: (id: number) => req(`/classifier-jobs/${id}/retry`, { method: 'POST' }),
   deleteClassifierJob: (id: number) => req(`/classifier-jobs/${id}`, { method: 'DELETE' }),
+  explainClassifierValue: (classifierId: number, trackId: number) =>
+    req(`/classifiers/${classifierId}/explain`, { method: 'POST', body: JSON.stringify({ track_id: trackId }) }),
   generate: (body: any) => req('/generate', { method: 'POST', body: JSON.stringify(body) }),
   runs: () => req('/runs'),
   saveCredentials: (client_id: string, client_secret: string) =>

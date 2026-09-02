@@ -10,6 +10,11 @@ import Paper from '@mui/material/Paper';
 import Chip from '@mui/material/Chip';
 import Tooltip from '@mui/material/Tooltip';
 import Alert from '@mui/material/Alert';
+import Dialog from '@mui/material/Dialog';
+import DialogActions from '@mui/material/DialogActions';
+import DialogContent from '@mui/material/DialogContent';
+import DialogTitle from '@mui/material/DialogTitle';
+import Divider from '@mui/material/Divider';
 import Button from '@mui/material/Button';
 import IconButton from '@mui/material/IconButton';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -107,6 +112,31 @@ export default function Search({ authed }: Props) {
   const [rows, setRows] = useState(50);
   const [sortKey, setSortKey] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  // per-track AI reasoning dialog
+  const [reasonFor, setReasonFor] = useState<{ t: Track; c: Classifier } | null>(null);
+  const [explanation, setExplanation] = useState('');
+  const [explaining, setExplaining] = useState(false);
+  const [explainError, setExplainError] = useState('');
+
+  const openReason = (t: Track, c: Classifier) => {
+    setReasonFor({ t, c });
+    setExplanation('');
+    setExplainError('');
+    setExplaining(false);
+  };
+  const fetchExplanation = async () => {
+    if (!reasonFor) return;
+    setExplaining(true);
+    setExplainError('');
+    try {
+      const r: any = await api.explainClassifierValue(reasonFor.c.id, reasonFor.t.id);
+      setExplanation(r.explanation || '(no explanation returned)');
+    } catch (e: any) {
+      setExplainError(e?.message || String(e));
+    } finally {
+      setExplaining(false);
+    }
+  };
 
   // Load the playlist's tracks (with pre-computed AI values) + classifiers.
   // ALL filtering below is client-side: instant, zero LLM, zero round-trips.
@@ -400,17 +430,28 @@ export default function Search({ authed }: Props) {
                       <TableCell>{t.language || '—'}</TableCell>
                       {activeClassifiers.map((c) => {
                         const v = t.classifications?.[String(c.id)];
+                        const open = () => openReason(t, c);
                         return (
                           <TableCell key={c.id} align="center">
                             {!v ? (
                               <Tooltip title="Not classified yet"><Chip size="small" label="·" variant="outlined" sx={{ height: 18, minWidth: 18, '& .MuiChip-label': { px: 0.25, fontSize: '0.7rem' } }} /></Tooltip>
                             ) : v.stale ? (
-                              <Tooltip title={`Stale (classifier changed): ${JSON.stringify(v.value)}`}><Chip size="small" color="warning" label="~" sx={{ height: 18, minWidth: 18, '& .MuiChip-label': { px: 0.25 } }} /></Tooltip>
+                              <Tooltip title={`Stale (classifier changed): ${JSON.stringify(v.value)} — click for reasoning`}>
+                                <Box onClick={open} sx={{ cursor: 'pointer', display: 'inline-block' }}>
+                                  <Chip size="small" color="warning" label="~" sx={{ height: 18, minWidth: 18, '& .MuiChip-label': { px: 0.25 } }} />
+                                </Box>
+                              </Tooltip>
                             ) : c.field_type === 'boolean' && v.value === true ? (
-                              <Tooltip title={v.reason || 'classified true'}><CheckCircleIcon fontSize="small" color="success" /></Tooltip>
+                              <Tooltip title={v.reason ? `${v.reason} — click for reasoning` : 'classified true — click for reasoning'}>
+                                <Box onClick={open} sx={{ cursor: 'pointer', display: 'inline-block' }}>
+                                  <CheckCircleIcon fontSize="small" color="success" />
+                                </Box>
+                              </Tooltip>
                             ) : (
-                              <Tooltip title={`classified: ${JSON.stringify(v.value)}${v.reason ? ' — ' + v.reason : ''}`}>
-                                <Typography variant="caption" color="text.disabled">{c.field_type === 'boolean' ? '–' : JSON.stringify(v.value)}</Typography>
+                              <Tooltip title={`classified: ${JSON.stringify(v.value)}${v.reason ? ' — ' + v.reason : ''} — click for reasoning`}>
+                                <Box onClick={open} sx={{ cursor: 'pointer', display: 'inline-block' }}>
+                                  <Typography variant="caption" color="text.disabled">{c.field_type === 'boolean' ? '–' : JSON.stringify(v.value)}</Typography>
+                                </Box>
                               </Tooltip>
                             )}
                           </TableCell>
@@ -428,6 +469,69 @@ export default function Search({ authed }: Props) {
           </>
         )}
       </Paper>
+
+      <Dialog open={!!reasonFor} onClose={() => setReasonFor(null)} maxWidth="sm" fullWidth>
+        {reasonFor && (() => {
+          const rv = reasonFor.t.classifications?.[String(reasonFor.c.id)];
+          const valueStr = rv ? JSON.stringify(rv.value) : '—';
+          return (
+            <>
+              <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <SmartToyIcon fontSize="small" />
+                <span>{reasonFor.c.name} — reasoning</span>
+              </DialogTitle>
+              <DialogContent>
+                <Typography variant="subtitle2" sx={{ mb: 0.25 }}>{reasonFor.t.name}</Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+                  {(reasonFor.t.artists || []).map((a) => a.name).join(', ')}
+                  {reasonFor.t.album_name ? ' · ' + reasonFor.t.album_name : ''}
+                  {yearOf(reasonFor.t) ? ' · ' + yearOf(reasonFor.t) : ''}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+                  Question: {reasonFor.c.query}
+                </Typography>
+
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                  <Typography variant="caption" color="text.secondary">Assigned value:</Typography>
+                  <Chip size="small" label={valueStr} variant="outlined" />
+                </Box>
+
+                <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Recorded at classification</Typography>
+                {rv?.reason ? (
+                  <Typography variant="body2">{rv.reason}</Typography>
+                ) : (
+                  <Typography variant="body2" color="text.secondary"><em>No reason was recorded for this track.</em></Typography>
+                )}
+
+                <Divider sx={{ my: 2 }} />
+
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                  <Typography variant="subtitle2">Detailed explanation <Typography component="span" variant="caption" color="text.secondary">(live LLM)</Typography></Typography>
+                  <Button size="small" variant="outlined"
+                    startIcon={explaining ? <CircularProgress size={14} /> : <SmartToyIcon />}
+                    onClick={fetchExplanation} disabled={explaining}>
+                    {explanation ? 'Explain again' : 'Explain in detail'}
+                  </Button>
+                </Box>
+                {explaining ? (
+                  <Typography variant="body2" color="text.secondary">Asking the model…</Typography>
+                ) : explainError ? (
+                  <Alert severity="error" sx={{ mb: 0.5 }}>{explainError}</Alert>
+                ) : explanation ? (
+                  <Typography variant="body2">{explanation}</Typography>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    Get a fresh, detailed explanation from the model of why this track received its value.
+                  </Typography>
+                )}
+              </DialogContent>
+              <DialogActions>
+                <Button onClick={() => setReasonFor(null)}>Close</Button>
+              </DialogActions>
+            </>
+          );
+        })()}
+      </Dialog>
     </Box>
   );
 }
