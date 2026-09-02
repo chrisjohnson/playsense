@@ -40,7 +40,6 @@ def _to_out(t: Track, reason: str = "", classifications: dict | None = None) -> 
         "duration_ms": t.duration_ms,
         "uri": t.uri or "",
         "external_url": t.external_url or "",
-        "language": t.language or "",
         "match_reason": reason,
         "classifications": classifications or {},
     }
@@ -112,8 +111,6 @@ def run_search(q: SearchQuery) -> dict:
             stmt = stmt.filter(func.substr(Track.release_date, 1, 4) >= f"{q.min_year:04d}")
         if q.max_year is not None:
             stmt = stmt.filter(func.substr(Track.release_date, 1, 4) <= f"{q.max_year:04d}")
-        if q.language:
-            stmt = stmt.filter(Track.language == q.language)
         # AI-classifier filters: join the pre-computed values (instant, no LLM)
         for cid_raw, val in (q.classifier_filters or {}).items():
             try:

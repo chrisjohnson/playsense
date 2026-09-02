@@ -40,7 +40,7 @@ import { rememberSearchQuery, lastSearchQuery } from '../searchParams';
 
 interface Props { authed: boolean; }
 
-type SortKey = 'name' | 'artists' | 'album' | 'language' | 'year' | 'duration' | `ai${number}`;
+type SortKey = 'name' | 'artists' | 'album' | 'year' | 'duration' | `ai${number}`;
 
 // ---------------------------------------------------------------------------
 // Fuzzy matching (client-side, instant): every query token must appear in the
@@ -89,7 +89,6 @@ interface Filters {
   maxYear: string;
   minDur: string;   // seconds
   maxDur: string;
-  language: string;
   // dynamic AI-field values keyed by classifier id
   ai: Record<number, any>;
 }
@@ -97,7 +96,7 @@ interface Filters {
 const EMPTY_AI: Record<number, any> = {};
 const baseFilters = (ai: Filters['ai']): Filters => ({
   artist: '', album: '', title: '', minYear: '', maxYear: '',
-  minDur: '', maxDur: '', language: '', ai,
+  minDur: '', maxDur: '', ai,
 });
 
 const yearOf = (t: Track) => (t.release_date || '').slice(0, 4);
@@ -106,7 +105,7 @@ const yearOf = (t: Track) => (t.release_date || '').slice(0, 4);
 // URL <-> view state: the query string (/search?pl=4&q=leon) mirrors the
 // whole Search view (playlist, every filter, paging, sort), so a refresh or
 // a shared link restores it exactly. Keys: pl q ar al ti ymin ymax dmin
-// dmax lang pg rs sk sd ai<CID>.
+// dmax pg rs sk sd ai<CID>.
 // ---------------------------------------------------------------------------
 
 function encodeAi(v: any): string | null {
@@ -142,7 +141,6 @@ function viewToQuery(pid: number | '', query: string, f: Filters, page: number, 
   if (f.maxYear) p.set('ymax', f.maxYear);
   if (f.minDur) p.set('dmin', f.minDur);
   if (f.maxDur) p.set('dmax', f.maxDur);
-  if (f.language) p.set('lang', f.language);
   for (const [cid, v] of Object.entries(f.ai)) {
     const enc = encodeAi(v);
     if (enc !== null) p.set('ai' + cid, enc);
@@ -200,7 +198,6 @@ export default function Search({ authed }: Props) {
     str('ar', 'artist'); str('al', 'album'); str('ti', 'title');
     const rng = (k: string, key: 'minYear' | 'maxYear' | 'minDur' | 'maxDur') => { const v = p.get(k); if (v) out[key] = v; };
     rng('ymin', 'minYear'); rng('ymax', 'maxYear'); rng('dmin', 'minDur'); rng('dmax', 'maxDur');
-    const lang = p.get('lang'); if (lang) out.language = lang;
     const ai: Record<number, any> = {};
     for (const [k, v] of p.entries()) {
       if (k.startsWith('ai') && /^\d+$/.test(k.slice(2))) ai[Number(k.slice(2))] = decodeAi(v);
@@ -212,7 +209,7 @@ export default function Search({ authed }: Props) {
   const [rows, setRows] = useState(() => Number(new URLSearchParams(initialQuery()).get('rs') || 50) || 50);
   const [sortKey, setSortKey] = useState<SortKey>(() => {
     const v = new URLSearchParams(initialQuery()).get('sk');
-    if (v === 'name' || v === 'artists' || v === 'album' || v === 'language' || v === 'year' || v === 'duration') return v;
+    if (v === 'name' || v === 'artists' || v === 'album' || v === 'year' || v === 'duration') return v;
     if (v && /^ai\d+$/.test(v)) return v as SortKey;
     return 'name';
   });
@@ -316,7 +313,7 @@ export default function Search({ authed }: Props) {
     }
     return m;
   }, [tracks, activeClassifiers]);
-  const filterActive = Boolean(q || f.artist || f.album || f.title || f.minYear || f.maxYear || f.minDur || f.maxDur || f.language || Object.values(f.ai).some((v) => v !== undefined && v !== '' && v !== false));
+  const filterActive = Boolean(q || f.artist || f.album || f.title || f.minYear || f.maxYear || f.minDur || f.maxDur || Object.values(f.ai).some((v) => v !== undefined && v !== '' && v !== false));
 
   // Precompute the fuzzy haystack once per track load.
   const indexed = useMemo(() => tracks.map((t) => ({
@@ -343,7 +340,6 @@ export default function Search({ authed }: Props) {
     if (f.maxYear) out = out.filter(({ t }) => yearOf(t) && Number(yearOf(t)) <= Number(f.maxYear));
     if (f.minDur) out = out.filter(({ t }) => (t.duration_ms || 0) / 1000 >= Number(f.minDur));
     if (f.maxDur) out = out.filter(({ t }) => (t.duration_ms || 0) / 1000 <= Number(f.maxDur));
-    if (f.language) out = out.filter(({ t }) => (t.language || '') === f.language);
     // AI-field filters: only tracks with a CURRENT value matching count.
     for (const c of activeClassifiers) {
       const want = f.ai[c.id];
@@ -377,7 +373,6 @@ export default function Search({ authed }: Props) {
       if (sortKey === 'name') return (x.t.name || '').toLowerCase();
       if (sortKey === 'artists') return (x.t.artists || []).map((a) => a.name).join(', ').toLowerCase();
       if (sortKey === 'album') return (x.t.album_name || '').toLowerCase();
-      if (sortKey === 'language') return (x.t.language || '').toLowerCase();
       if (sortKey === 'year') return yearOf(x.t);
       if (sortKey === 'duration') return x.t.duration_ms || 0;
       const m = sortKey.match(/^ai(\d+)$/);
@@ -431,7 +426,6 @@ export default function Search({ authed }: Props) {
       max_year: f.maxYear ? Number(f.maxYear) : null,
       min_dur_s: f.minDur ? Number(f.minDur) : null,
       max_dur_s: f.maxDur ? Number(f.maxDur) : null,
-      language: f.language,
       classifier_filters: ai,
     };
   };
@@ -518,10 +512,6 @@ export default function Search({ authed }: Props) {
           <TextField size="small" label="Dur (s)" type="number" value={f.maxDur} onChange={set('maxDur')}
             sx={{ width: 88 }} inputProps={{ 'aria-label': 'max duration' }} />
         </Box>
-        <TextField size="small" select label="Language" value={f.language} onChange={set('language')} sx={{ width: 110 }}>
-          <MenuItem value="">Any</MenuItem>
-          <MenuItem value="es">Spanish</MenuItem>
-        </TextField>
       </Box>
 
       {activeClassifiers.length > 0 ? (
@@ -616,9 +606,6 @@ export default function Search({ authed }: Props) {
                     <TableCell sortDirection={sortKey === 'year' ? sortDir : false}>
                       <TableSortLabel active={sortKey === 'year'} direction={sortDir} onClick={() => toggleSort('year')}>Year</TableSortLabel>
                     </TableCell>
-                    <TableCell sortDirection={sortKey === 'language' ? sortDir : false}>
-                      <TableSortLabel active={sortKey === 'language'} direction={sortDir} onClick={() => toggleSort('language')}>Lang</TableSortLabel>
-                    </TableCell>
                     {activeClassifiers.map((c) => {
                       const sk = 'ai' + c.id as SortKey;
                       return (
@@ -649,7 +636,6 @@ export default function Search({ authed }: Props) {
                       <TableCell>{(t.artists || []).map((a) => a.name).join(', ')}</TableCell>
                       <TableCell sx={{ maxWidth: 220 }}><Typography noWrap variant="body2">{t.album_name}</Typography></TableCell>
                       <TableCell>{yearOf(t) || '—'}</TableCell>
-                      <TableCell>{t.language || '—'}</TableCell>
                       {activeClassifiers.map((c) => {
                         const v = t.classifications?.[String(c.id)];
                         const open = () => openReason(t, c);

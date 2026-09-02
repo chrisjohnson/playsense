@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func
 from ..db import get_db, SessionLocal
-from ..models import User, Playlist, Track, ClassificationRun, Classifier, TrackClassification
+from ..models import User, Playlist, Track, Classifier, TrackClassification
 from ..config import get_settings
 from ..spotify.auth import authorize_redirect_url, authenticate_code
 from ..spotify.download import current_spotify, sync_playlists
@@ -13,8 +13,6 @@ from ..spotify.client import SpotifyAPI
 from ..spotify import credentials
 from ..spotify.worker import enqueue as enqueue_download
 from pydantic import BaseModel
-from ..inference.runner import run_classification
-from ..inference.adapter import JSON_SCHEMA as LLM_SCHEMA
 from .schemas import *
 from .search import run_search, classifications_map
 from .classifiers import router as classifier_router  # noqa: F401
@@ -168,17 +166,6 @@ def download(pl_id: int):
         db.close()
 
 
-@api_router.post("/playlists/{pl_id}/classify")
-def classify(pl_id: int, name: str = Body("...", embed=True), use_semantic: bool = Body(True, embed=True)):
-    # NOTE: use_semantic MUST stay a Body param - a bare `bool = True` would
-    # become a query param and the body value would be silently ignored.
-    try:
-        run = run_classification(pl_id, name, use_semantic=use_semantic)
-        return run_to_out(run)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
 @api_router.get("/playlists/{pl_id}/tracks")
 def list_tracks(pl_id: int):
     db = SessionLocal()
@@ -212,24 +199,10 @@ def generate(body: GeneratePlaylistIn):
     return result
 
 
-@api_router.get("/runs")
-def get_runs():
-    db = SessionLocal()
-    try:
-        rows = db.query(ClassificationRun).order_by(ClassificationRun.created_at.desc()).all()
-        return [run_to_out(r) for r in rows]
-    finally:
-        db.close()
-
-
 def track_to_out(t, classifications: dict | None = None):
     out = TrackOut.model_validate(t)
     out.classifications = classifications or {}
     return out
-
-def run_to_out(r):
-    return ClassificationRunOut.model_validate(r)
-
 
 def create_spotify_playlist(api, name, description, tracks):
     me = api.get("/me")

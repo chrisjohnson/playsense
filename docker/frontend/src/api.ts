@@ -69,12 +69,6 @@ export type Track = {
   duration_ms?: number;
   uri: string;
   external_url?: string;
-  is_mexican?: boolean;
-  is_latin_american?: boolean;
-  region?: string;
-  language?: string;
-  genres?: any[];
-  classification_strategy?: string;
   match_reason?: string;
   // AI-classifier values: { "<classifier_id>": { value, stale, reason } }
   classifications?: Record<string, { value: any; stale: boolean; reason: string }>;

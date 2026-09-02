@@ -7,7 +7,7 @@ fast, filterable list over pre-computed data, exactly like a good-quality
 web app's filterable table:
 
 1. **Static metadata** — everything Spotify gives us and we persist
-   (title, artists, album, release date, duration, language). Filtered with
+   (title, artists, album, release date, duration). Filtered with
    plain structured filters; the free-text box is an *instant fuzzy match*
    over these fields. No network round-trip, no model, no latency.
 2. **Dynamic metadata ("AI fields")** — extra columns that do not exist in
@@ -109,7 +109,7 @@ unit of work it runs:
      every proxy/model honors the structured-output parameter),
    - the classifier query as the evaluation instruction,
    - each track's static metadata (title, artists, album, release date,
-     duration, language, genre when available), numbered,
+     duration), numbered,
    - a required response: one entry per track index with `value` (+ optional
      short one-clause `reason`, persisted to `track_classifications.reason`
       (see §5.1).
@@ -199,7 +199,7 @@ the same dialog):
   (~1.5 MB for 5k tracks) + one GET of the classifier definitions.
 - All filtering is **client-side and synchronous**: fuzzy text (title,
   artists, album), structured metadata (artist/album/title contains, year
-  range, duration range, language), and one filter per classifier rendered
+  range, duration range), and one filter per classifier rendered
   by its field type (boolean → checkbox, number → min–max, string →
   contains/select, datetime → range). Result count + sortable paginated
   table update on every keystroke with no debounce needed.
@@ -242,22 +242,22 @@ A *saved search* (filter set + name) becomes a **generated playlist**:
   `POST /api/generate` plumbing (which already supports a search body,
   including classifier filters).
 
-## 7. Legacy system (deprecated)
+## 7. Legacy system (removed)
 
 The original `is_mexican` / `is_latin_american` / `region` / `language` /
-`classification_strategy` columns, `POST /playlists/{id}/classify`, the
-Runs page, and the old hybrid engine implement the *old* model (one fixed
-set of Latin/Mexican labels, query-time LLM). They are superseded by this
-design:
+`classification_strategy` columns, `POST /playlists/{id}/classify`,
+`GET /runs`, the Runs page, and the old hybrid engine (the fixed
+Latin/Mexican label set + query-time LLM) are REMOVED (2026-09-03): the
+columns were dropped from the DB (the 149-row `language` heuristic set was
+the only useful survivor - if language ever matters again, produce it via
+a "language" classifier), the endpoints 404, and `inference/engine.py` /
+`runner.py` are gone. The LLM paths left are the classifier batch pass and
+the deprecated `POST /api/search` relevance scoring. The audio-feature
+columns (danceability...valence) were dropped too - dev-mode Spotify never
+returns them.
 
-- `language` is the one useful survivor (149 es rows in la crema); it stays
-  as a static filter for now and could later be produced by a "language"
-  classifier. The rest are frozen legacy data.
-- The old columns are **not removed yet** (the Tracks page still displays
-  them); a follow-up deletes the columns, the /classify endpoint, and the
-  Runs tab once the classifier system is in daily use.
-- The mock LLM (`backend/tests/mock_llm_server.py`) remains a dev tool for
-  exercising classifier runs without the real model.
+The mock LLM (`backend/tests/mock_llm_server.py`) remains a dev tool for
+exercising classifier runs without the real model.
 
 ## 8. Phase status
 

@@ -132,7 +132,7 @@ def _track_line(i: int, t: Track) -> str:
     dur_s = round(t.duration_ms / 1000) if t.duration_ms else None
     return (f"{i}: title=\"{t.name}\" artists=[{', '.join(artists)}] "
             f"album=\"{t.album_name or '?'}\" year={ (t.release_date or '?')[:4] } "
-            f"duration_s={dur_s} language={t.language or '?'}")
+            f"duration_s={dur_s}")
 
 
 def _artists_list(t: Track) -> list[str]:

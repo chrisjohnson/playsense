@@ -138,7 +138,6 @@ export default function Generate({ authed }: Props) {
     if (spec?.title) parts.push('title ~ ' + spec.title);
     if (spec?.min_year || spec?.max_year) parts.push('year ' + (spec.min_year || '…') + '–' + (spec.max_year || '…'));
     if (spec?.min_dur_s || spec?.max_dur_s) parts.push('dur ' + (spec.min_dur_s || 0) + '–' + (spec.max_dur_s || '…') + 's');
-    if (spec?.language) parts.push('language ' + spec.language);
     const cf = spec?.classifier_filters || {};
     for (const [cid, v] of Object.entries<any>(cf)) {
       parts.push('AI#' + cid + '=' + (typeof v === 'object' ? (v?.min ?? '…') + '–' + (v?.max ?? '…') : JSON.stringify(v)));
@@ -171,7 +170,7 @@ export default function Generate({ authed }: Props) {
         <EmptyState
           icon={<AutoAwesomeIcon sx={{ fontSize: 44 }} />}
           title="No generated playlists yet"
-          hint={<>Dial in a subset on the Search tab (text, year, duration, language, AI classifications…),
+          hint={<>Dial in a subset on the Search tab (text, year, duration, AI classifications…),
             then click <b>Save as generated playlist</b> to turn it into a synced Spotify playlist.</>}
         />
       ) : (

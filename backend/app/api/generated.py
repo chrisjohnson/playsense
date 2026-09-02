@@ -91,8 +91,6 @@ def _resolve(db, gp: GeneratedPlaylist) -> list:
         scope = scope.filter(Track.duration_ms >= int(spec["min_dur_s"]) * 1000)
     if spec.get("max_dur_s"):
         scope = scope.filter(Track.duration_ms <= int(spec["max_dur_s"]) * 1000)
-    if spec.get("language"):
-        scope = scope.filter(Track.language == spec["language"])
     cands = scope.order_by(Track.playlist_track_index).all()
 
     q = (spec.get("q") or "").strip()

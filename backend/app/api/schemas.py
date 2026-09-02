@@ -30,23 +30,16 @@ class TrackOut(BaseModel):
     duration_ms: Optional[int] = None
     uri: str = ""
     external_url: str = ""
-    is_latin_american: bool = False
-    is_mexican: bool = False
-    region: str = ""
-    language: str = ""
-    genres: Any = []
-    classification_strategy: str = ""
-    run_id: Optional[int] = None
     # AI-classifier values: {"<classifier_id>": {"value": <json>, "stale": bool, "reason": str}}
     classifications: dict = {}
 
     model_config = {"from_attributes": True}
 
-    @field_validator("artists", "genres", mode="before")
+    @field_validator("artists", mode="before")
     @classmethod
     def _parse_json_lists(cls, v):
-        # artists/genres are stored as JSON text on the model; the API must
-        # return them as arrays (the frontend .map()s over them).
+        # artists is stored as JSON text on the model; the API must
+        # return it as an array (the frontend .map()s over it).
         if isinstance(v, str):
             try:
                 return _json.loads(v) or []
@@ -55,25 +48,10 @@ class TrackOut(BaseModel):
         return v or []
 
 
-class ClassificationRunOut(BaseModel):
-    id: int
-    name: str
-    strategy: str = "hybrid"
-    status: str = "pending"
-    created_at: Optional[datetime] = None
-    finished_at: Optional[datetime] = None
-    llm_used: bool = False
-    n_classified: int = 0
-    n_mexican: int = 0
-    n_latin_american: int = 0
-
-    model_config = {"from_attributes": True}
-
-
 class SearchQuery(BaseModel):
     """Traditional metadata filters + optional semantic (LLM) free-text.
 
-    The metadata filters (title/artist/album/year/language) are plain
+    The metadata filters (title/artist/album/year) are plain
     structured search - instant, no LLM. `q` is the semantic part: the query
     plus each track's metadata goes to the LLM, so free-text like
     "mariachi music" or "mexican and mexican-inspired" works. Audio-feature
@@ -86,7 +64,6 @@ class SearchQuery(BaseModel):
     album: Optional[str] = None
     min_year: Optional[int] = None
     max_year: Optional[int] = None
-    language: Optional[str] = None
     use_semantic: bool = True
     limit: int = 500
     # AI-classifier filters: {"<classifier_id>": <expected value>}

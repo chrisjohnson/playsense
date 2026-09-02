@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Minimal OpenAI-compatible mock LLM for local development.
 
-Lets the full LLM paths (InferenceAdapter.relevance_batch -> search.run_search,
-InferenceAdapter.classify -> ClassificationEngine, and the new classifier
-batch format used by app/api/classifiers.py) be exercised without a real
-model. It answers deterministically with keyword/token-based logic in the
-exact JSON shapes the adapter expects, so parsing/filtering/sorting/render are
-genuinely covered.
+Lets the full LLM paths (InferenceAdapter.relevance_batch -> search.run_search
+and the classifier batch format used by app/api/classifiers.py) be exercised
+without a real model. It answers deterministically with keyword/token-based
+logic in the exact JSON shapes the adapter expects, so parsing/filtering/
+sorting/render are genuinely covered.
 
     python3 mock_llm_server.py [port]     # default 8901
 
@@ -31,14 +30,6 @@ MEXICAN = ["mexico", "mexican", "mexicana", "mexicanas", "banda", "bandas",
            "durangeno", "huapango", "huapangos", "son jalisciense", "son jarocho",
            "guadalajara", "monterrey", "ciudad mexico", "mexico city", "tijuana",
            "puebla", "torreon", "sinaloa", "chihuahua", "zacatecas", "cuernavaca"]
-LATIN = ["cumbia", "reggaeton", "reggaetón", "latin pop", "bachata", "salsa",
-         "merengue", "dembow", "trap latino", "latin", "latino", "latina",
-         "latin america", "colombia", "argentina", "chile", "peru", "cuba",
-         "puerto rico", "venezuela", "guatemala", "bolivia", "paraguay",
-         "ecuador", "dominican", "panama", "costa rica", "el salvador",
-         "honduras", "nicaragua", "uruguay"]
-ES_MARKERS = ["de la", "los", "las", "para", "una", "con", "el", "la", "del",
-              "es", "por"]
 _WORD_RE = re.compile(r"[a-zà-öø-ÿ0-9]+")
 LINE_RE = re.compile(r'^(\d+): artists=\[(.*?)\] title="(.*)" album="(.*)" year=(\S+)', re.M)
 
@@ -95,29 +86,6 @@ def answer_classifier(user: str) -> dict:
     return {"results": results}
 
 
-def answer_classification(user: str) -> dict:
-    def field(name):
-        m = re.search(rf"^{name}:\s*(.+)$", user, re.M)
-        return m.group(1).strip() if m else ""
-    text = " ".join([field("Artist names"), field("Album"), field("Title"),
-                     field("Spotify genres")]).lower()
-    toks = set(_WORD_RE.findall(text))
-    mex = [s for s in MEXICAN if _match(text, toks, s)]
-    lat = [s for s in LATIN if _match(text, toks, s)]
-    is_mex = bool(mex)
-    is_latin = is_mex or bool(lat)
-    return {
-        "is_mexican": is_mex,
-        "is_latin_american": is_latin,
-        "region": "Mexico" if is_mex else ("Latin America" if is_latin else ""),
-        "language": "es" if any(_match(text, toks, m) for m in ES_MARKERS) else "",
-        "confidence": 0.9 if (mex or lat) else 0.3,
-        "reasoning": ("mock token match: " + ", ".join((mex + lat)[:3])) if (mex or lat)
-        else "no mock token signal",
-        "signal": (mex + lat)[:6],
-    }
-
-
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):  # keep the log quiet
         pass
@@ -155,8 +123,6 @@ class Handler(BaseHTTPRequestHandler):
         elif user.startswith("Question:"):
             # 1st-pass field-type inference prompt
             obj = {"field_type": "boolean", "reason": "mock: yes/no question"}
-        elif "Artist names:" in user:
-            obj = answer_classification(user)
         else:
             # Unknown prompt: answer with an object that is NOT a valid
             # classification (all required fields missing) so the adapter
