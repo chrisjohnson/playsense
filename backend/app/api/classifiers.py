@@ -369,6 +369,37 @@ def update_classifier(cid: int, body: ClassifierUpdate):
         db.close()
 
 
+@router.post("/{cid}/rerun")
+def rerun_classifier(cid: int):
+    """Force a full re-classification without changing the definition.
+
+    Bumps the revision (every stored value becomes stale) and the job
+    manager's auto-scan re-enqueues jobs for every playlist on the next
+    tick. This is the trigger for changes the revision system can't see on
+    its own: a new model, changed prompt plumbing, or changed source
+    metadata (e.g. dropping a field the classifier was seeing).
+    """
+    db = SessionLocal()
+    try:
+        c = db.get(Classifier, cid)
+        if c is None:
+            raise HTTPException(404, "Classifier not found")
+        c.revision += 1
+        c.updated_at = datetime.utcnow()
+        # same as a redefinition: lift any pause from cancelled jobs so the
+        # auto-scan re-enqueues this classifier's scopes
+        from ..models import ClassifierJob
+        db.query(ClassifierJob).filter(
+            ClassifierJob.classifier_id == cid,
+            ClassifierJob.status == "cancelled",
+        ).delete(synchronize_session=False)
+        db.commit()
+        db.refresh(c)
+        return _classifier_out(c, db.query(func.count(Track.id)).scalar() or 0)
+    finally:
+        db.close()
+
+
 @router.delete("/{cid}")
 def delete_classifier(cid: int):
     db = SessionLocal()

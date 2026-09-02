@@ -375,6 +375,7 @@ export default function Classifiers() {
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState<null | { mode: 'create' } | { mode: 'edit'; classifier: Classifier }>(null);
+  const [rerunTarget, setRerunTarget] = useState<Classifier | null>(null);
 
   const refresh = useCallback(() => {
     Promise.all([api.classifiers(), api.classifierJobs()])
@@ -454,6 +455,17 @@ export default function Classifiers() {
     catch (e: any) { setError(e?.message || String(e)); }
   };
 
+  const doRerun = async () => {
+    if (!rerunTarget) return;
+    setError('');
+    try {
+      await api.rerunClassifier(rerunTarget.id);
+      setNotice(rerunTarget.name + ': all stored values marked stale — a full re-classification is queued for every playlist.');
+      setRerunTarget(null);
+      refresh();
+    } catch (e: any) { setError(e?.message || String(e)); }
+  };
+
   return (
     <Box>
       <PageHeader
@@ -519,6 +531,9 @@ export default function Classifiers() {
                         </Button>
                         <Button size="small" startIcon={<PlayArrowIcon />} onClick={() => enqueueAll(c.id)} disabled={!c.field_type}>
                           Classify all
+                        </Button>
+                        <Button size="small" startIcon={<RefreshIcon />} onClick={() => setRerunTarget(c)} disabled={!c.field_type}>
+                          Re-run all
                         </Button>
                       </Box>
                     </TableCell>
@@ -655,6 +670,23 @@ export default function Classifiers() {
           onSaved={(msg) => { setNotice(msg); refresh(); }}
         />
       ) : null}
+
+      <Dialog open={!!rerunTarget} onClose={() => setRerunTarget(null)} maxWidth="xs">
+        <DialogTitle>Re-run {rerunTarget?.name} from scratch?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            This marks all {(rerunTarget?.stats ? rerunTarget.stats.current + rerunTarget.stats.stale : 0).toLocaleString()}
+            {' '}stored values as stale and queues a full re-classification of all
+            {' '}{(rerunTarget?.stats?.total || 0).toLocaleString()} tracks across every playlist — the same effect as
+            editing the definition, without changing it. Use it when something outside the definition
+            changed: the model, the prompt, or the source metadata.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRerunTarget(null)}>Cancel</Button>
+          <Button variant="contained" onClick={doRerun}>Re-run everything</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

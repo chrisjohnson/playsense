@@ -151,8 +151,8 @@ full. Design around them, do not fight them:
   pre-computed `classifications`) plus the classifier list, then filters
   synchronously in the browser - fuzzy text (substring + 1-edit distance over
   title/artists/album), artist/album/title contains, year/duration range,
-  language, and one filter per AI classifier rendered by its field type
-  (boolean -> checkbox). A search never calls the model, so it is always
+  and one filter per AI classifier rendered by its field type (boolean ->
+  checkbox). A search never calls the model, so it is always
   instant and never flaky. AI metadata is produced by the background job
   manager (`app/jobmanager.py` + `app/api/classifier_jobs.py`): a daemon
   thread steps ONE classifier job at a time (25 tracks/LLM call, strict JSON
@@ -161,14 +161,18 @@ full. Design around them, do not fight them:
   after a backoff. Cancelling a job is also a PAUSE (suppresses the auto-
   scan for that scope); a revision bump lifts the pause. Do NOT reintroduce
   query-time LLM calls on the search path.
-- The is_mexican/is_latin_american/region columns are HEURISTIC/LLM
-  classification output (see /api/playlists/{id}/classify) - NOT trustworthy
-  metadata, so search does not expose them as filters ("mexican music" is a
-  semantic query). The classification heuristic is token-based (word/token
-  matching, never substring - substring matching is how "leon" in "leonard"
-  and "grupo" in "Grupo Batuque" used to false-positive). Language detection
-  only sets es when a Spanish marker token is present - it must NOT default
-  missing to es.
+- The old heuristic classification columns (is_mexican/is_latin_american/
+  region/language/classification_strategy) and the one-shot /classify +
+  /runs endpoints were REMOVED (2026-09, commit d7e274b): "mexican music" is
+  a semantic question, answered only by classifiers. If token-based
+  heuristics ever return, keep them token-based (never substring - substring
+  matching is how "leon" in "leonard" and "grupo" in "Grupo Batuque" used to
+  false-positive) and never let them masquerade as Spotify metadata.
+- `POST /api/classifiers/{id}/rerun` (AI tab: "Re-run all" per classifier)
+  force-bumps the revision without changing the definition: every stored
+  value goes stale and the auto-scan re-enqueues all playlists. Use it when
+  something OUTSIDE the definition changed - a new model, prompt plumbing,
+  or source metadata. A plain revision bump is the only staleness trigger;
 - adapter.ClassificationResult.from_dict must reject responses missing the
   required classification keys as a FAILED semantic call (error set); defaulting
   missing keys to False/"" would mark tracks confidently non-Latin with
@@ -184,7 +188,7 @@ full. Design around them, do not fight them:
 
 - A GENERATED PLAYLIST is a saved SEARCH (not a separate LLM query): the Search
   page serializes its current filter state (fuzzy text, artist/album/title,
-  year/duration/language, one entry per AI classifier) into `search_spec` (JSON)
+  year/duration range, one entry per AI classifier) into `search_spec` (JSON)
   on a `GeneratedPlaylist` row. The server re-resolves that spec against the
   SOURCE playlist's tracks at sync time (same semantics as the client-side
   filter: Python port of Search.tsx's lev1/token-match fuzzy in generated.py).

@@ -29,6 +29,7 @@ export const api = {
     req('/classifiers', { method: 'POST', body: JSON.stringify(body) }),
   updateClassifier: (id: number, body: { name?: string; query?: string; field_type?: string }) =>
     req(`/classifiers/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  rerunClassifier: (id: number) => req(`/classifiers/${id}/rerun`, { method: 'POST' }),
   deleteClassifier: (id: number) => req(`/classifiers/${id}`, { method: 'DELETE' }),
   classifierJobs: () => req('/classifier-jobs'),
   enqueueClassifierJob: (body: { classifier_id: number; playlist_id?: number }) =>
