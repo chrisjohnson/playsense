@@ -500,6 +500,11 @@ export default function Classifiers() {
                 // before its original scope was exhausted (playlist changed
                 // mid-run, or a later job finished the rest). Not a failure.
                 const partial = state === 'done' && j.done < j.total;
+                // A newer job for the same (classifier, playlist) scope supersedes
+                // this one: resuming it would be redundant (or would un-pause a
+                // scope the user deliberately paused via the newer job).
+                const superseded = jobs.some((o) => o.id !== j.id && o.classifier_id === j.classifier_id
+                  && o.playlist_id === j.playlist_id && o.id > j.id);
                 return (
                   <TableRow key={j.id} hover className={pulse === 'running' ? 'dsh-row--running' : undefined}>
                     <TableCell>{j.id}</TableCell>
@@ -549,7 +554,7 @@ export default function Classifiers() {
                         {retrying || state === 'failed' ? (
                           <Button size="small" startIcon={<RefreshIcon />} onClick={() => retry(j.id)}>Retry now</Button>
                         ) : null}
-                        {partial && j.classifier_name ? (
+                        {partial && j.classifier_name && !superseded ? (
                           <Button size="small" startIcon={<PlayArrowIcon />} onClick={() => resume(j)}>Resume</Button>
                         ) : null}
                         {['done', 'cancelled', 'error', 'failed'].includes(state) ? (
