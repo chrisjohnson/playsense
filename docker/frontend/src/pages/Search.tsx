@@ -6,7 +6,7 @@ import MenuItem from '@mui/material/MenuItem';
 import Checkbox from '@mui/material/Checkbox';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import InputAdornment from '@mui/material/InputAdornment';
-import Paper from '@mui/material/Paper';
+import Card from '@mui/material/Card';
 import Chip from '@mui/material/Chip';
 import Tooltip from '@mui/material/Tooltip';
 import Alert from '@mui/material/Alert';
@@ -35,6 +35,7 @@ import FilterAltOffIcon from '@mui/icons-material/FilterAltOff';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 
 import { api, PlaylistItem, Track, Classifier } from '../api';
+import { DataTable } from '../components';
 
 interface Props { authed: boolean; }
 
@@ -317,34 +318,34 @@ export default function Search({ authed }: Props) {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1.5, flexWrap: 'wrap' }}>
-        <Typography variant="h5" sx={{ flexGrow: 1 }}>
-          Tracks {current ? `— ${current.name}` : ''}
-        </Typography>
-        {loading ? <CircularProgress size={18} /> : null}
-        <Typography variant="body2" color="text.secondary" sx={{ pb: '9px' }}>
-          {loading ? 'loading…' : `${sorted.length.toLocaleString()} of ${tracks.length.toLocaleString()} tracks`}
-        </Typography>
-        {filterActive ? <Button size="small" onClick={clearAll} sx={{ pb: '9px' }}>Clear</Button> : null}
-        <Button size="small" variant="outlined" startIcon={<SaveAltIcon />} onClick={() => setSaveOpen(true)} disabled={!pid} sx={{ pb: '9px' }}>
-          Save as generated playlist
-        </Button>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1.75, flexWrap: 'wrap' }}>
+        <SearchIcon color="primary" />
+        <Typography variant="h5">Search</Typography>
         <TextField
           select size="small" label="Playlist" value={pid}
           onChange={(e) => { setPid(Number(e.target.value)); setPage(0); setQuery(''); setF(baseFilters(EMPTY_AI)); }}
-          sx={{ minWidth: 240 }}
+          sx={{ minWidth: 280 }}
           InputProps={{ 'aria-label': 'playlist' }}
         >
           {playlists.map((p) => (
-            <MenuItem key={p.id} value={p.id}>{p.name} ({p.track_count})</MenuItem>
+            <MenuItem key={p.id} value={p.id}>{p.name} ({(p.track_count || 0).toLocaleString()}){p.is_default ? ' · default' : ''}</MenuItem>
           ))}
         </TextField>
+        <Chip size="small" variant="outlined" sx={{ opacity: 0.9 }}
+          label={loading ? 'loading…' : sorted.length.toLocaleString() + ' of ' + tracks.length.toLocaleString() + ' tracks'} />
+        {loading ? <CircularProgress size={16} /> : null}
+        <Box sx={{ flexGrow: 1 }} />
+        {filterActive ? <Button size="small" startIcon={<CloseIcon />} onClick={clearAll}>Clear</Button> : null}
+        <Button size="small" variant="outlined" startIcon={<SaveAltIcon />} onClick={() => setSaveOpen(true)} disabled={!pid}>
+          Save as generated playlist
+        </Button>
       </Box>
 
       <TextField
         fullWidth value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }}
         placeholder={authed ? 'Search title, artist, album — fuzzy, instant' : 'Connect to Spotify to search'}
         disabled={!authed}
+        sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2.5, minHeight: 48 } }}
         InputProps={{
           startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>,
           endAdornment: query ? (
@@ -357,7 +358,8 @@ export default function Search({ authed }: Props) {
         }}
       />
 
-      <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-end', flexWrap: 'wrap', mt: 1 }}>
+      <Card sx={{ p: 2, mt: 1.75 }}>
+      <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <TextField size="small" label="Artist" value={f.artist} onChange={set('artist')} sx={{ width: 140 }}
           inputProps={{ 'aria-label': 'artist' }} />
         <TextField size="small" label="Album" value={f.album} onChange={set('album')} sx={{ width: 140 }}
@@ -385,8 +387,7 @@ export default function Search({ authed }: Props) {
       </Box>
 
       {activeClassifiers.length > 0 ? (
-        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', mt: 1, px: 1.5, py: 0.75 }}
-          component={Paper} variant="outlined">
+        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', mt: 1.75, pt: 1.5, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
             <SmartToyIcon fontSize="small" color="primary" />
             <Typography variant="caption" color="text.secondary">AI fields</Typography>
@@ -439,6 +440,7 @@ export default function Search({ authed }: Props) {
           })}
         </Box>
       ) : null}
+      </Card>
 
       {error ? (
         <Alert severity="error" sx={{ mt: 2 }} action={<Button color="inherit" size="small" onClick={clearAll}>Dismiss</Button>}>
@@ -446,7 +448,7 @@ export default function Search({ authed }: Props) {
         </Alert>
       ) : null}
 
-      <Paper variant="outlined" sx={{ mt: 2 }}>
+      <DataTable sx={{ mt: 2 }}>
         {loading && tracks.length === 0 ? (
           <Box sx={{ p: 6, textAlign: 'center' }}><CircularProgress /></Box>
         ) : sorted.length === 0 ? (
@@ -459,8 +461,8 @@ export default function Search({ authed }: Props) {
           </Box>
         ) : (
           <>
-            <TableContainer>
-              <Table size="small">
+            <TableContainer sx={{ maxHeight: 'calc(100vh - 340px)' }}>
+              <Table size="small" stickyHeader>
                 <TableHead>
                   <TableRow>
                     <TableCell sx={{ width: 36 }} />
@@ -537,7 +539,7 @@ export default function Search({ authed }: Props) {
             />
           </>
         )}
-      </Paper>
+      </DataTable>
 
       <Dialog open={!!reasonFor} onClose={() => setReasonFor(null)} maxWidth="sm" fullWidth>
         {reasonFor && (() => {

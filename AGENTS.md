@@ -220,3 +220,26 @@ full. Design around them, do not fight them:
   still work. The fix is for the user to Reconnect (Home page) - a token
   refresh does NOT widen scopes. Sync failures surface as 502 with the
   Spotify status in detail, and the GP row is rolled back.
+
+## 8. Frontend design system (2026-09 polish pass)
+
+- Spotify-dark, lifted: `src/theme.ts` holds the whole design system -
+  primary #1ed760 (contrastText dark), background #0d0f12 / paper #15181d,
+  borderRadius 10, soft borders instead of hard elevation, rounded pill
+  chips, rounded dialogs, uppercase micro-labels on table heads. Keep new
+  UI inside this system; don't introduce a second accent palette.
+- Shared primitives in `src/components.tsx`: `PulseDot` (the activity
+  indicator - solid dot for terminal states, glowing pulse for
+  running/retrying), `PageHeader`, `EmptyState`, `SectionLabel`,
+  `DataTable` (rounded bordered table shell). Pages should use these
+  instead of re-inventing headers/empty states.
+- Keyframes live in `src/index.css` (imported by main.tsx):
+  `dsh-pulse-glow` (pulse dot), `dsh-row--running` (breathing row tint on
+  the live classifier-job row), `dsh-fade-up`/`dsh-page-enter` (tab
+  content entrance).
+- Tab order is AI first (`App.tsx`) - the classifiers are the app's
+  headline feature. The AI job table shows one PulseDot per job row and a
+  breathing background while running; a job whose classifier was deleted is
+  auto-marked done on the next 10s tick (jobmanager `_step_job`).
+- NOTE: the jobs endpoint is `GET /api/classifier-jobs` (HYPHEN) -
+  `/api/classifier/jobs` 404s (cost a confusing "empty" curl once).

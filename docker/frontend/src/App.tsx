@@ -7,6 +7,12 @@ import Tabs from '@mui/material/Tabs';
 import Tab from '@mui/material/Tab';
 import Box from '@mui/material/Box';
 import Chip from '@mui/material/Chip';
+import Tooltip from '@mui/material/Tooltip';
+import MusicNoteIcon from '@mui/icons-material/MusicNote';
+import HouseIcon from '@mui/icons-material/House';
+import SearchIcon from '@mui/icons-material/Search';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
 
 import Home from './pages/Home';
 import Search from './pages/Search';
@@ -20,6 +26,13 @@ export type TabName = 'home' | 'search' | 'generate' | 'ai';
 // back/forward keep you where you were.
 const VALID_TABS: TabName[] = ['home', 'search', 'generate', 'ai'];
 
+const TAB_META: Record<TabName, { label: string; icon: JSX.Element }> = {
+  home: { label: 'Home', icon: <HouseIcon /> },
+  search: { label: 'Search', icon: <SearchIcon /> },
+  generate: { label: 'Generate', icon: <AutoAwesomeIcon /> },
+  ai: { label: 'AI', icon: <SmartToyIcon /> },
+};
+
 function parseHash(): TabName {
   const h = window.location.hash.replace(/^#\/?/, '');
   if (h === '' || h === 'home') return 'home';
@@ -30,6 +43,27 @@ function parseHash(): TabName {
 function hashFor(tab: TabName): string {
   if (tab === 'home') return '#/';
   return '#/' + tab;
+}
+
+function ConnectionChip({ configured, authed, display, authUrl }: {
+  configured: boolean; authed: boolean; display: string; authUrl: string;
+}) {
+  if (configured === false) return <Chip label="Setup required" color="warning" size="small" />;
+  if (authed) {
+    return (
+      <Chip size="small" color="success" variant="outlined"
+        icon={<MusicNoteIcon />}
+        label={display || 'Connected'}
+        sx={{ '& .MuiChip-icon': { color: 'primary.main' } }}
+      />
+    );
+  }
+  return (
+    <Tooltip title="Click to connect">
+      <Chip size="small" color="error" variant="outlined" label="Not connected"
+        onClick={() => window.open(authUrl || '#', '_blank')} sx={{ cursor: 'pointer' }} />
+    </Tooltip>
+  );
 }
 
 export default function App() {
@@ -103,38 +137,45 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  const tabs: TabName[] = ['home', 'search', 'generate', 'ai'];
+  // AI first: the classifiers are the app's headline feature.
+  const tabs: TabName[] = ['ai', 'home', 'search', 'generate'];
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-      <AppBar position="static">
-        <Toolbar>
-          <Typography variant="h6" sx={{ flexGrow: 1, fontWeight: 700 }}>
-            Spotify Tracker
-          </Typography>
-          {configured === false ? (
-            <Chip label="Setup required" color="warning" />
-          ) : authed === false ? (
-            <Chip
-              label="Not connected"
-              color="error"
-              onClick={() => window.open(authUrl || '#', '_blank')}
-            />
-          ) : (
-            <Chip label={display || 'Connected'} color="success" />
-          )}
+      <AppBar position="sticky" elevation={0} sx={{ background: 'rgba(13,15,18,0.88)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <Toolbar sx={{ gap: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, flexGrow: 1 }}>
+            <Box sx={{
+              width: 34, height: 34, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'linear-gradient(135deg, #1ed760 0%, #0f9d46 100%)',
+              boxShadow: '0 2px 10px rgba(30,215,96,0.35)', color: '#052012',
+            }}>
+              <MusicNoteIcon sx={{ fontSize: 20 }} />
+            </Box>
+            <Box>
+              <Typography variant="h6" sx={{ lineHeight: 1.1 }}>Spotify Tracker</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1 }}>analyze · classify · sync</Typography>
+            </Box>
+          </Box>
+          <ConnectionChip configured={configured} authed={!!authed} display={display} authUrl={authUrl} />
         </Toolbar>
-        <Tabs value={tabs.indexOf(tab)} onChange={(_, v: number) => { const t = tabs[v]; if (t && t !== tab) setTab(t); }} textColor="inherit">
+        <Tabs
+          value={tabs.indexOf(tab)}
+          onChange={(_, v: number) => { const t = tabs[v]; if (t && t !== tab) setTab(t); }}
+          sx={{ minHeight: 44, '& .MuiTab-root': { minHeight: 44, py: 0, opacity: 0.62, '&.Mui-selected': { opacity: 1 } } }}
+        >
           {tabs.map((t) => (
-            <Tab key={t} label={t[0].toUpperCase() + t.slice(1)} />
+            <Tab key={t} icon={TAB_META[t].icon} label={TAB_META[t].label} iconPosition="start" />
           ))}
         </Tabs>
       </AppBar>
-      <Container maxWidth="xl" sx={{ flexGrow: 1, py: 3 }}>
-        {tab === 'home' && <Home authUrl={authUrl} onAuthed={setAuthed} configured={configured} onRefresh={refreshAuth} authed={!!authed} display={display} oauthMsg={oauthMsg} />}
-        {tab === 'search' && <Search authed={!!authed} />}
-        {tab === 'generate' && <Generate authed={!!authed} />}
-        {tab === 'ai' && <Classifiers />}
+      <Container maxWidth="xl" sx={{ flexGrow: 1, py: 3.5 }}>
+        <div key={tab} className="dsh-page-enter">
+          {tab === 'home' && <Home authUrl={authUrl} onAuthed={setAuthed} configured={configured} onRefresh={refreshAuth} authed={!!authed} display={display} oauthMsg={oauthMsg} />}
+          {tab === 'search' && <Search authed={!!authed} />}
+          {tab === 'generate' && <Generate authed={!!authed} />}
+          {tab === 'ai' && <Classifiers />}
+        </div>
       </Container>
     </Box>
   );

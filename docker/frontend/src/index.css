@@ -1,0 +1,55 @@
+/* Global motion + chrome. Keyframes live here (not in the MUI theme) so they
+   can be shared by plain-HTML elements and styled components alike. */
+
+@keyframes dsh-pulse-glow {
+  0%   { box-shadow: 0 0 0 0 var(--pulse-color, rgba(30, 215, 96, 0.55)); }
+  70%  { box-shadow: 0 0 0 7px rgba(0, 0, 0, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
+}
+
+.dsh-pulse-dot {
+  width: 9px;
+  height: 9px;
+  min-width: 9px;
+  border-radius: 999px;
+  display: inline-block;
+  background: currentColor;
+}
+
+.dsh-pulse-dot--active {
+  animation: dsh-pulse-glow 1.6s ease-out infinite;
+}
+
+/* soft breathing tint for a whole row while work is happening */
+@keyframes dsh-row-breathe {
+  0%, 100% { background-color: rgba(30, 215, 96, 0.05); }
+  50%      { background-color: rgba(30, 215, 96, 0.10); }
+}
+.dsh-row--running {
+  animation: dsh-row-breathe 2.4s ease-in-out infinite;
+}
+
+/* page/tab content entrance */
+@keyframes dsh-fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+.dsh-page-enter {
+  animation: dsh-fade-up 200ms ease-out both;
+}
+
+/* thin dark scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-track { background: transparent; }
+
+::selection {
+  background: rgba(30, 215, 96, 0.35);
+}

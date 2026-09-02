@@ -21,9 +21,10 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import DeleteIcon from '@mui/icons-material/Delete';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
-import FilterAltOffIcon from '@mui/icons-material/FilterAltOff';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 
 import { api } from '../api';
+import { PageHeader, EmptyState } from '../components';
 
 interface Props { authed: boolean; }
 
@@ -59,6 +60,12 @@ type Diff = {
 };
 
 const shortUri = (u: string) => (u.length > 44 ? '…' + u.slice(-30) : u);
+
+// deterministic pastel hue per generated playlist
+function playlistHue(id: number): string {
+  const h = (Math.abs(id) * 47 + 120) % 360;
+  return 'hsl(' + h + ' 52% 46%)';
+}
 
 export default function Generate({ authed }: Props) {
   const [items, setItems] = useState<GeneratedItem[]>([]);
@@ -141,16 +148,19 @@ export default function Generate({ authed }: Props) {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1 }}>
-        <Typography variant="h5" sx={{ flexGrow: 1 }}>Generated playlists</Typography>
-        <Button startIcon={<RefreshIcon />} onClick={load} size="small">Refresh</Button>
-      </Box>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 900 }}>
-        A generated playlist is a saved search — fuzzy text, metadata and AI-classifier filters on one of
-        your playlists — kept in sync with a Spotify playlist. Dial in the subset on the Search tab, then
-        "Save as generated playlist". With preview mode on (the default), syncing only shows a diff of what
-        would change; turn it off to actually write to Spotify.
-      </Typography>
+      <PageHeader
+        icon={<AutoAwesomeIcon />}
+        title="Generated playlists"
+        intro={(
+          <>
+            A generated playlist is a saved search — fuzzy text, metadata and AI-classifier filters on one
+            of your playlists — kept in sync with a Spotify playlist. Dial in the subset on the Search tab,
+            then <b>Save as generated playlist</b>. With preview mode on (the default), syncing only shows
+            a diff of what would change; turn it off to actually write to Spotify.
+          </>
+        )}
+        actions={<Button startIcon={<RefreshIcon />} onClick={load} size="small">Refresh</Button>}
+      />
 
       {error ? <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>{error}</Alert> : null}
       {notice ? <Alert severity="success" sx={{ mb: 2 }} onClose={() => setNotice('')}>{notice}</Alert> : null}
@@ -158,30 +168,38 @@ export default function Generate({ authed }: Props) {
       {loading && items.length === 0 ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}><CircularProgress /></Box>
       ) : items.length === 0 ? (
-        <Card variant="outlined">
-          <CardContent sx={{ textAlign: 'center', py: 5 }}>
-            <FilterAltOffIcon color="disabled" sx={{ fontSize: 40, mb: 1 }} />
-            <Typography color="text.secondary">
-              No generated playlists yet. Dial in a subset on the Search tab (text, year, duration,
-              language, AI classifications…), then click "Save as generated playlist".
-            </Typography>
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={<AutoAwesomeIcon sx={{ fontSize: 44 }} />}
+          title="No generated playlists yet"
+          hint={<>Dial in a subset on the Search tab (text, year, duration, language, AI classifications…),
+            then click <b>Save as generated playlist</b> to turn it into a synced Spotify playlist.</>}
+        />
       ) : (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
           {items.map((g) => (
-            <Card key={g.id} variant="outlined">
+            <Card key={g.id} sx={{
+              transition: 'transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease',
+              '&:hover': { transform: 'translateY(-2px)', boxShadow: '0 8px 24px rgba(0,0,0,0.35)', borderColor: 'rgba(255,255,255,0.18)' },
+            }}>
               <CardContent>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, flexWrap: 'wrap' }}>
+                  <Box sx={{
+                    width: 38, height: 38, borderRadius: 2, flexShrink: 0,
+                    background: 'linear-gradient(135deg, ' + playlistHue(g.id) + ' 0%, rgba(0,0,0,0.55) 130%)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.12)',
+                  }}>
+                    <AutoAwesomeIcon sx={{ color: 'rgba(255,255,255,0.92)', fontSize: 19 }} />
+                  </Box>
                   <Typography variant="h6" sx={{ fontWeight: 700 }}>{g.name}</Typography>
-                  {g.preview_mode ? <Chip size="small" color="warning" label="preview mode" /> : <Chip size="small" color="success" label="live" />}
-                  <Chip size="small" label={g.sync_mode === 'ongoing' ? 'auto-sync ~30min' : 'manual sync'} />
-                  {g.spotify_playlist_id ? null : <Chip size="small" variant="outlined" label="not synced yet" />}
+                  {g.preview_mode ? <Chip size="small" variant="outlined" color="warning" label="preview mode" /> : <Chip size="small" color="success" label="live" />}
+                  <Chip size="small" variant="outlined" label={g.sync_mode === 'ongoing' ? 'auto-sync ~30min' : 'manual sync'} />
+                  {g.spotify_playlist_id ? null : <Chip size="small" variant="outlined" label="not synced yet" sx={{ opacity: 0.7 }} />}
                   {g.track_count != null ? <Chip size="small" variant="outlined" label={g.track_count.toLocaleString() + ' tracks match now'} /> : null}
                   <Box sx={{ flexGrow: 1 }} />
                   {g.spotify_external_url ? (
-                    <Link href={g.spotify_external_url} target="_blank" rel="noreferrer" sx={{ display: 'inline-flex', alignItems: 'center' }}>
-                      <OpenInNewIcon fontSize="small" sx={{ mr: 0.25 }} /> Spotify
+                    <Link href={g.spotify_external_url} target="_blank" rel="noreferrer" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+                      <OpenInNewIcon fontSize="small" /> Spotify
                     </Link>
                   ) : null}
                 </Box>
@@ -248,8 +266,8 @@ export default function Generate({ authed }: Props) {
                 {!diffFor.diff.applied && diffFor.diff.preview_mode ? ' Preview mode is on — nothing was written to Spotify.' : ''}
               </Typography>
               {diffFor.diff.added > 0 ? (
-                <Box sx={{ mb: 1.5 }}>
-                  <Typography variant="subtitle2" color="success.main">Adding ({diffFor.diff.added})</Typography>
+                <Box sx={{ mb: 1.5, p: 1.25, borderRadius: 2, border: '1px solid rgba(30,215,96,0.28)', bgcolor: 'rgba(30,215,96,0.06)' }}>
+                  <Typography variant="subtitle2" color="success.main" sx={{ mb: 0.75 }}>+ Adding ({diffFor.diff.added})</Typography>
                   {diffFor.diff.added_tracks.map((t) => (
                     <Typography key={t.uri} variant="body2" noWrap>{t.name || shortUri(t.uri)}</Typography>
                   ))}
@@ -259,8 +277,8 @@ export default function Generate({ authed }: Props) {
                 </Box>
               ) : null}
               {diffFor.diff.removed > 0 ? (
-                <Box>
-                  <Typography variant="subtitle2" color="error">Removing ({diffFor.diff.removed})</Typography>
+                <Box sx={{ p: 1.25, borderRadius: 2, border: '1px solid rgba(241,94,108,0.28)', bgcolor: 'rgba(241,94,108,0.06)' }}>
+                  <Typography variant="subtitle2" color="error.main" sx={{ mb: 0.75 }}>- Removing ({diffFor.diff.removed})</Typography>
                   {diffFor.diff.removed_tracks.map((t) => (
                     <Typography key={t.uri} variant="body2" noWrap>{shortUri(t.uri)}</Typography>
                   ))}

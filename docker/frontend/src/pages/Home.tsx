@@ -8,7 +8,21 @@ import Box from '@mui/material/Box';
 import TextField from '@mui/material/TextField';
 import LinearProgress from '@mui/material/LinearProgress';
 import Chip from '@mui/material/Chip';
+import Alert from '@mui/material/Alert';
+import MusicNoteIcon from '@mui/icons-material/MusicNote';
+import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck';
+import StarIcon from '@mui/icons-material/Star';
+import StarOutlineIcon from '@mui/icons-material/StarOutline';
+import DownloadIcon from '@mui/icons-material/Download';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import { api, PlaylistItem } from '../api';
+import { EmptyState } from '../components';
+
+// deterministic pastel hue per playlist so cards are scannable
+function playlistHue(id: number): string {
+  const h = (Math.abs(id) * 47 + 120) % 360;
+  return 'hsl(' + h + ' 52% 46%)';
+}
 
 interface Props {
   authUrl: string;
@@ -214,16 +228,28 @@ export default function Home({ onAuthed, configured, onRefresh, authed, display,
           </Box>
         </Box>
       ) : authed ? (
-        <Box sx={{ mb: 3 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Typography variant="h5">Connected as {display || 'Spotify'}</Typography>
-            <Button size="small" variant="text" onClick={reconnect}>Reconnect</Button>
-          </Box>
-          <Typography color="text.secondary">You're connected to Spotify. Click "Sync from Spotify" to load your playlists, then download the ones you want to analyze.</Typography>
-          <Typography color="text.secondary" variant="caption" sx={{ mt: 0.5 }}>
-            Tip: if a generated-playlist sync fails with "403 Forbidden", click Reconnect once to re-grant the playlist-write scopes.
-          </Typography>
-        </Box>
+        <Card sx={{ mb: 3, display: 'flex', alignItems: 'center', gap: 2 }}>
+          <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 2, flexGrow: 1 }}>
+            <Box sx={{
+              width: 44, height: 44, borderRadius: '50%', flexShrink: 0,
+              background: 'linear-gradient(135deg, #1ed760, #0f9d46)',
+              color: '#052012', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontWeight: 800, fontSize: '1.05rem',
+            }}>
+              {(display || 'S').charAt(0).toUpperCase()}
+            </Box>
+            <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+              <Typography variant="h6">Connected as {display || 'Spotify'}</Typography>
+              <Typography variant="body2" color="text.secondary" noWrap>
+                Sync your playlists below, download the ones you want to analyze, then build searches.
+              </Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5, opacity: 0.8 }}>
+                Tip: if a generated-playlist sync fails with "403 Forbidden", click Reconnect once to re-grant the playlist-write scopes.
+              </Typography>
+            </Box>
+            <Button size="small" variant="outlined" onClick={reconnect}>Reconnect</Button>
+          </CardContent>
+        </Card>
       ) : (
         <Box sx={{ mb: 3 }}>
           <Typography variant="h5" gutterBottom>Get started</Typography>
@@ -239,11 +265,11 @@ export default function Home({ onAuthed, configured, onRefresh, authed, display,
           </Button>
         </Box>
       )}
-      {oauthMsg && (
-        <Box sx={{ mb: 2, p: 1.5, borderRadius: 1, bgcolor: oauthMsg.startsWith('Connected') ? 'success.main' : 'error.main', color: 'white' }}>
-          <Typography variant="body2">{oauthMsg}</Typography>
-        </Box>
-      )}
+      {oauthMsg ? (
+        <Alert severity={oauthMsg.startsWith('Connected') ? 'success' : 'error'} sx={{ mb: 2 }}>
+          {oauthMsg}
+        </Alert>
+      ) : null}
       {loading ? <LinearProgress /> : null}
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
         <Typography variant="h5" gutterBottom sx={{ flexGrow: 1 }}>Your playlists</Typography>
@@ -252,33 +278,53 @@ export default function Home({ onAuthed, configured, onRefresh, authed, display,
         </Button>
       </Box>
       {authed && pls.length === 0 && !loading && (
-        <Box sx={{ p: 2, mb: 2, borderRadius: 1, bgcolor: 'action.hover' }}>
-          <Typography color="text.secondary">
-            No playlists loaded yet. Click "Sync from Spotify" to pull your playlists from Spotify, then Download the ones you want to analyze.
-          </Typography>
-        </Box>
+        <EmptyState
+          icon={<PlaylistAddCheckIcon sx={{ fontSize: 44 }} />}
+          title="No playlists loaded yet"
+          hint={<>Click <b>Sync from Spotify</b> to pull your playlists, then download the ones you want to analyze.</>}
+        />
       )}
       <Grid container spacing={2}>
         {pls.map((p) => (
           <Grid item xs={12} sm={6} md={4} key={p.spotify_playlist_id}>
-            <Card variant="outlined">
-              <CardContent>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                  <Typography variant="h6" noWrap sx={{ flexGrow: 1 }}>{p.name}</Typography>
-                  {p.is_default ? <Chip size="small" color="primary" label="default" sx={{ height: 20, fontSize: '0.7rem' }} /> : null}
+            <Card sx={{
+              height: '100%', display: 'flex', flexDirection: 'column',
+              transition: 'transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease',
+              '&:hover': { transform: 'translateY(-3px)', boxShadow: '0 10px 28px rgba(0,0,0,0.4)', borderColor: 'rgba(255,255,255,0.18)' },
+            }}>
+              <CardContent sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1 }}>
+                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.25 }}>
+                  <Box sx={{
+                    width: 44, height: 44, borderRadius: 2, flexShrink: 0,
+                    background: 'linear-gradient(135deg, ' + playlistHue(p.id) + ' 0%, rgba(0,0,0,0.55) 130%)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.12)',
+                  }}>
+                    <MusicNoteIcon sx={{ color: 'rgba(255,255,255,0.9)', fontSize: 22 }} />
+                  </Box>
+                  <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                      <Typography variant="h6" noWrap sx={{ flexGrow: 1 }}>{p.name}</Typography>
+                      {p.is_default ? <Chip size="small" color="primary" icon={<StarIcon sx={{ fontSize: '1rem !important' }} />} label="default" sx={{ height: 20, fontSize: '0.68rem' }} /> : null}
+                    </Box>
+                    <Typography variant="body2" color="text.secondary" noWrap>{p.description || p.owner_id}</Typography>
+                  </Box>
                 </Box>
-                <Typography variant="body2" color="text.secondary" noWrap>{p.description || p.owner_id}</Typography>
-                <Typography variant="body2">{p.track_count} tracks</Typography>
+                <Box sx={{ mt: 1.5 }}>
+                  <Typography variant="body2" sx={{ opacity: 0.9 }}>{(p.track_count || 0).toLocaleString()} tracks</Typography>
+                </Box>
                 {dlStatus(p)}
-                <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
-                  <Button size="small" onClick={() => doDownload(p.id)} disabled={busy === p.id || ['queued', 'downloading', 'waiting_quota'].includes(p.download_state || '')}>
-                    {busy === p.id ? 'Queuing...' : (p.download_state === 'done' ? 'Re-download' : 'Download')}
+                <Box sx={{ mt: 'auto', pt: 1.5, display: 'flex', gap: 0.75, flexWrap: 'wrap' }}>
+                  <Button size="small" variant="outlined" startIcon={<DownloadIcon />}
+                    onClick={() => doDownload(p.id)}
+                    disabled={busy === p.id || ['queued', 'downloading', 'waiting_quota'].includes(p.download_state || '')}>
+                    {busy === p.id ? 'Queuing…' : (p.download_state === 'done' ? 'Re-download' : 'Download')}
                   </Button>
-                  <Button size="small" onClick={() => doClassify(p.id)} disabled={busy === p.id}>
-                    {busy === p.id ? 'Classifying...' : 'Classify'}
+                  <Button size="small" startIcon={<AutoAwesomeIcon />} onClick={() => doClassify(p.id)} disabled={busy === p.id}>
+                    {busy === p.id ? 'Classifying…' : 'Classify'}
                   </Button>
                   {p.is_default ? null : (
-                    <Button size="small" variant="outlined" onClick={() => doSetDefault(p.id)} disabled={busyDefault === p.id}>
+                    <Button size="small" startIcon={<StarOutlineIcon />} onClick={() => doSetDefault(p.id)} disabled={busyDefault === p.id}>
                       {busyDefault === p.id ? 'Setting…' : 'Set default'}
                     </Button>
                   )}

@@ -4,7 +4,6 @@ import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
 import MenuItem from '@mui/material/MenuItem';
 import Button from '@mui/material/Button';
-import Paper from '@mui/material/Paper';
 import Chip from '@mui/material/Chip';
 import Tooltip from '@mui/material/Tooltip';
 import Alert from '@mui/material/Alert';
@@ -35,11 +34,13 @@ import SearchIcon from '@mui/icons-material/Search';
 import ShuffleIcon from '@mui/icons-material/Shuffle';
 
 import { api, Classifier, ClassifierJob } from '../api';
+import { PulseDot, PageHeader, SectionLabel, DataTable } from '../components';
 
-const statusColor: Record<string, 'default' | 'primary' | 'success' | 'warning' | 'error'> = {
-  queued: 'default', running: 'primary', cancelling: 'warning',
-  retrying: 'warning', failed: 'error',
-  done: 'success', error: 'error', cancelled: 'default',
+type PulseState = 'running' | 'queued' | 'retrying' | 'error' | 'done' | 'idle';
+const statusPulse: Record<string, PulseState> = {
+  queued: 'queued', running: 'running', cancelling: 'retrying',
+  retrying: 'retrying', failed: 'error',
+  done: 'done', error: 'error', cancelled: 'idle',
 };
 
 function elapsed(j: ClassifierJob): string {
@@ -376,25 +377,32 @@ export default function Classifiers() {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1 }}>
-        <SmartToyIcon color="primary" />
-        <Typography variant="h5" sx={{ flexGrow: 1 }}>AI Classifiers</Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => setModal({ mode: 'create' })} size="small">
-          New classifier
-        </Button>
-        <Button startIcon={<RefreshIcon />} onClick={refresh} size="small">Refresh</Button>
-      </Box>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 900 }}>
-        A classifier is a natural-language question about your music. Its answer is pre-computed for every
-        track by a background batch job (chunked LLM calls, strict JSON schema), and then shows up on the
-        Search page as a regular instant filter. You can preview a definition on a few tracks before saving;
-        editing a definition marks all existing values stale and the jobs below re-run automatically.
-      </Typography>
+      <PageHeader
+        icon={<SmartToyIcon />}
+        title="AI Classifiers"
+        intro={(
+          <>
+            A classifier is a natural-language question about your music. Its answer is pre-computed for
+            every track by a background batch job (chunked LLM calls, strict JSON schema), and then shows up
+            on the Search page as a regular instant filter. You can preview a definition on a few tracks
+            before saving; editing a definition marks all existing values stale and the jobs below re-run
+            automatically.
+          </>
+        )}
+        actions={(
+          <>
+            <Button startIcon={<RefreshIcon />} onClick={refresh} size="small">Refresh</Button>
+            <Button variant="contained" startIcon={<AddIcon />} onClick={() => setModal({ mode: 'create' })} size="small">
+              New classifier
+            </Button>
+          </>
+        )}
+      />
 
       {error ? <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>{error}</Alert> : null}
       {notice ? <Alert severity="success" sx={{ mb: 2 }} onClose={() => setNotice('')}>{notice}</Alert> : null}
 
-      <Paper variant="outlined">
+      <DataTable>
         <TableContainer>
           <Table size="small">
             <TableHead>
@@ -444,10 +452,10 @@ export default function Classifiers() {
             </TableBody>
           </Table>
         </TableContainer>
-      </Paper>
+      </DataTable>
 
-      <Typography variant="subtitle1" sx={{ mt: 3, mb: 1 }}>Batch jobs</Typography>
-      <Paper variant="outlined">
+      <SectionLabel sx={{ mt: 3, mb: 1 }}>Batch jobs</SectionLabel>
+      <DataTable>
         <TableContainer>
           <Table size="small">
             <TableHead>
@@ -461,6 +469,7 @@ export default function Classifiers() {
                 <TableCell align="center">Time</TableCell>
                 <TableCell>Error</TableCell>
                 <TableCell align="right">Actions</TableCell>
+
               </TableRow>
             </TableHead>
             <TableBody>
@@ -469,12 +478,18 @@ export default function Classifiers() {
                 const active = ['queued', 'running', 'cancelling'].includes(j.status);
                 const retrying = j.state === 'retrying';
                 const state = j.state || j.status;
+                const pulse = statusPulse[state] || 'idle';
                 return (
-                  <TableRow key={j.id} hover>
+                  <TableRow key={j.id} hover className={pulse === 'running' ? 'dsh-row--running' : undefined}>
                     <TableCell>{j.id}</TableCell>
                     <TableCell>{j.classifier_name}</TableCell>
                     <TableCell>{j.playlist_name}</TableCell>
-                    <TableCell><Chip size="small" color={statusColor[state] || 'default'} label={state} /></TableCell>
+                    <TableCell>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <PulseDot state={pulse} />
+                        <Typography variant="body2" sx={{ fontWeight: 600, textTransform: 'capitalize', opacity: pulse === 'idle' ? 0.7 : 1 }}>{state}</Typography>
+                      </Box>
+                    </TableCell>
                     <TableCell>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         {active || j.status === 'done' ? (
@@ -525,7 +540,7 @@ export default function Classifiers() {
             </TableBody>
           </Table>
         </TableContainer>
-      </Paper>
+      </DataTable>
 
       {modal ? (
         <ClassifierModal
