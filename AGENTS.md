@@ -179,3 +179,44 @@ full. Design around them, do not fight them:
 - Audio-feature filters were REMOVED (dev mode never returns audio features;
   min/max energy/tempo/valence/danceability filters on NULL columns hid every
   result). Don't reintroduce them without a real data source.
+
+## 7. Generated playlists + default playlist (2026-09)
+
+- A GENERATED PLAYLIST is a saved SEARCH (not a separate LLM query): the Search
+  page serializes its current filter state (fuzzy text, artist/album/title,
+  year/duration/language, one entry per AI classifier) into `search_spec` (JSON)
+  on a `GeneratedPlaylist` row. The server re-resolves that spec against the
+  SOURCE playlist's tracks at sync time (same semantics as the client-side
+  filter: Python port of Search.tsx's lev1/token-match fuzzy in generated.py).
+- Sync model (quota-friendly, see section 5): a sync NEVER reads the Spotify
+  playlist for its baseline. Baseline = `last_synced_uris` (what we last
+  WROTE). Diff = desired vs baseline, so a sync only costs WRITE calls
+  (chunked /playlists/{id}/tracks, 100 per call). First sync creates the
+  playlist (POST /users/{me}/playlists + one add call). If the user edits the
+  Spotify playlist by hand, `POST /generated/{id}/reread` does the full
+  paginated read once to re-baseline.
+- PREVIEW MODE is persisted on the row (default ON): sync endpoint computes
+  `effective_dry = dry_run OR preview_mode` - preview always wins, so a
+  preview-mode GP can never write, even for manual/ongoing syncs. The UI's
+  "Sync now" button is disabled while preview mode is on; "Preview changes"
+  always works.
+- ONGOING sync: the job manager daemon (`app/jobmanager.py` `_tick`) calls
+  `_maybe_sync_generated()` on a ~30min cadence (GENERATED_SYNC_INTERVAL_SECS,
+  module-level monotonic timestamp); it only touches GPs with
+  sync_mode=="ongoing" AND preview_mode==False, each in its own DB session
+  with isolated try/except so a Spotify failure can never break LLM job
+  stepping. (See section 5 for quota: a failing ongoing sync just records
+  last_sync_status and retries next tick.)
+- DEFAULT PLAYLIST: `playlists.is_default` (sqlite ALTER guard in db.py init);
+  `POST /playlists/{id}/default` sets one and clears the rest. The Search
+  page opens on it; the Home card has a Set-default button + chip.
+- The old independent-LLM "Generate" form and the legacy Runs/Tracks frontend
+  pages were REMOVED (Runs = one-shot legacy classify MVP, superseded by the
+  AI-tab classifier jobs; the /runs + /tracks backend endpoints are
+  deprecated but still exist - don't build on them). The Generate tab now
+  manages generated playlists.
+- Dev-mode caveat: playlist WRITE endpoints (create + add/remove tracks) can
+  403 if the stored OAuth token predates the playlist-modify scopes. Reads
+  still work. The fix is for the user to Reconnect (Home page) - a token
+  refresh does NOT widen scopes. Sync failures surface as 502 with the
+  Spotify status in detail, and the GP row is rolled back.

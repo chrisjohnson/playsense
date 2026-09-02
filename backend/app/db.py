@@ -24,3 +24,11 @@ def get_db():
 def init_db():
     from . import models  # noqa: F401  (ensure all models are registered on Base)
     Base.metadata.create_all(bind=engine)
+    if settings.database_url.startswith("sqlite"):
+        # create_all never ALTERs existing tables - add new columns manually.
+        from sqlalchemy import inspect, text
+        with engine.connect() as conn:
+            cols = {c["name"] for c in inspect(conn).get_columns("playlists")}
+            if "is_default" not in cols:
+                conn.execute(text("ALTER TABLE playlists ADD COLUMN is_default BOOLEAN DEFAULT 0"))
+                conn.commit()

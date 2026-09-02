@@ -7,10 +7,10 @@ import Typography from '@mui/material/Typography';
 import Box from '@mui/material/Box';
 import TextField from '@mui/material/TextField';
 import LinearProgress from '@mui/material/LinearProgress';
+import Chip from '@mui/material/Chip';
 import { api, PlaylistItem } from '../api';
 
 interface Props {
-  onOpenTracks: (id: number) => void;
   authUrl: string;
   onAuthed: (v: boolean) => void;
   configured: boolean;
@@ -68,10 +68,11 @@ function dlStatus(p: PlaylistItem) {
   );
 }
 
-export default function Home({ onOpenTracks, onAuthed, configured, onRefresh, authed, display, oauthMsg }: Props) {
+export default function Home({ onAuthed, configured, onRefresh, authed, display, oauthMsg }: Props) {
   const [pls, setPls] = useState<PlaylistItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<number | null>(null);
+  const [busyDefault, setBusyDefault] = useState<number | null>(null);
   const [cid, setCid] = useState('');
   const [csecret, setCsecret] = useState('');
   const [saving, setSaving] = useState(false);
@@ -150,6 +151,24 @@ export default function Home({ onOpenTracks, onAuthed, configured, onRefresh, au
     return () => clearInterval(t);
   }, [anyActive]);
 
+  const doSetDefault = async (id: number) => {
+    setBusyDefault(id);
+    try {
+      await api.setDefaultPlaylist(id);
+      await load();
+    } catch (e: any) {
+      alert('Could not set default: ' + (e.message || e));
+    } finally {
+      setBusyDefault(null);
+    }
+  };
+
+  const reconnect = () => {
+    api.authorizeRaw().then((r: any) => {
+      if (r && r.authorize_url) window.open(r.authorize_url, '_blank');
+    });
+  };
+
   const doClassify = async (id: number) => {
     setBusy(id);
     try {
@@ -196,8 +215,14 @@ export default function Home({ onOpenTracks, onAuthed, configured, onRefresh, au
         </Box>
       ) : authed ? (
         <Box sx={{ mb: 3 }}>
-          <Typography variant="h5" gutterBottom>Connected as {display || 'Spotify'}</Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography variant="h5">Connected as {display || 'Spotify'}</Typography>
+            <Button size="small" variant="text" onClick={reconnect}>Reconnect</Button>
+          </Box>
           <Typography color="text.secondary">You're connected to Spotify. Click "Sync from Spotify" to load your playlists, then download the ones you want to analyze.</Typography>
+          <Typography color="text.secondary" variant="caption" sx={{ mt: 0.5 }}>
+            Tip: if a generated-playlist sync fails with "403 Forbidden", click Reconnect once to re-grant the playlist-write scopes.
+          </Typography>
         </Box>
       ) : (
         <Box sx={{ mb: 3 }}>
@@ -238,7 +263,10 @@ export default function Home({ onOpenTracks, onAuthed, configured, onRefresh, au
           <Grid item xs={12} sm={6} md={4} key={p.spotify_playlist_id}>
             <Card variant="outlined">
               <CardContent>
-                <Typography variant="h6" noWrap>{p.name}</Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                  <Typography variant="h6" noWrap sx={{ flexGrow: 1 }}>{p.name}</Typography>
+                  {p.is_default ? <Chip size="small" color="primary" label="default" sx={{ height: 20, fontSize: '0.7rem' }} /> : null}
+                </Box>
                 <Typography variant="body2" color="text.secondary" noWrap>{p.description || p.owner_id}</Typography>
                 <Typography variant="body2">{p.track_count} tracks</Typography>
                 {dlStatus(p)}
@@ -249,7 +277,11 @@ export default function Home({ onOpenTracks, onAuthed, configured, onRefresh, au
                   <Button size="small" onClick={() => doClassify(p.id)} disabled={busy === p.id}>
                     {busy === p.id ? 'Classifying...' : 'Classify'}
                   </Button>
-                  <Button size="small" onClick={() => onOpenTracks(p.id)}>View tracks</Button>
+                  {p.is_default ? null : (
+                    <Button size="small" variant="outlined" onClick={() => doSetDefault(p.id)} disabled={busyDefault === p.id}>
+                      {busyDefault === p.id ? 'Setting…' : 'Set default'}
+                    </Button>
+                  )}
                 </Box>
               </CardContent>
             </Card>

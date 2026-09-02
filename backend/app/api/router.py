@@ -19,10 +19,12 @@ from .schemas import *
 from .search import run_search, classifications_map
 from .classifiers import router as classifier_router  # noqa: F401
 from .classifier_jobs import router as classifier_jobs_router  # noqa: F401
+from .generated import router as generated_router  # noqa: F401
 
 api_router = APIRouter()
 api_router.include_router(classifier_router)
 api_router.include_router(classifier_jobs_router)
+api_router.include_router(generated_router)
 settings = get_settings()
 
 
@@ -102,11 +104,29 @@ def get_playlists(limit: int = Query(50)):
                  "description": p.description, "owner_id": p.owner_id, "is_public": p.is_public,
                  "external_url": p.external_url, "fetched_at": p.fetched_at,
                  "track_count": cnt.get(p.id, 0),
+                  "is_default": bool(p.is_default),
                  "download_state": p.download_state or "idle",
                  "download_saved": p.download_saved or 0,
                  "download_total": p.download_total or 0,
                  "download_error": p.download_error or "",
                  "download_updated_at": p.download_updated_at} for p in rows]
+    finally:
+        db.close()
+
+
+@api_router.post("/playlists/{pid}/default")
+def set_default_playlist(pid: int):
+    """Mark one playlist as the default (cleared on all others). Other pages
+    open with the default playlist selected."""
+    db = SessionLocal()
+    try:
+        pl = db.get(Playlist, pid)
+        if pl is None:
+            raise HTTPException(status_code=404, detail="Playlist not found")
+        for p in db.query(Playlist).all():
+            p.is_default = (p.id == pid)
+        db.commit()
+        return {"status": "ok", "default_playlist_id": pid}
     finally:
         db.close()
 

@@ -27,6 +27,7 @@ import TableRow from '@mui/material/TableRow';
 import TablePagination from '@mui/material/TablePagination';
 import TableSortLabel from '@mui/material/TableSortLabel';
 import SearchIcon from '@mui/icons-material/Search';
+import SaveAltIcon from '@mui/icons-material/SaveAlt';
 import CloseIcon from '@mui/icons-material/Close';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -102,6 +103,7 @@ const yearOf = (t: Track) => (t.release_date || '').slice(0, 4);
 export default function Search({ authed }: Props) {
   const [playlists, setPlaylists] = useState<PlaylistItem[]>([]);
   const [pid, setPid] = useState<number | ''>('');
+  // (default playlist preference applied when the list loads)
   const [tracks, setTracks] = useState<Track[]>([]);
   const [classifiers, setClassifiers] = useState<Classifier[]>([]);
   const [loading, setLoading] = useState(false);
@@ -117,6 +119,15 @@ export default function Search({ authed }: Props) {
   const [explanation, setExplanation] = useState('');
   const [explaining, setExplaining] = useState(false);
   const [explainError, setExplainError] = useState('');
+  // save current search as a generated playlist
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveName, setSaveName] = useState('');
+  const [saveDesc, setSaveDesc] = useState('');
+  const [savePreview, setSavePreview] = useState(true);
+  const [saveMode, setSaveMode] = useState('once');
+  const [saveBusy, setSaveBusy] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [savedNotice, setSavedNotice] = useState('');
 
   const openReason = (t: Track, c: Classifier) => {
     setReasonFor({ t, c });
@@ -160,7 +171,8 @@ export default function Search({ authed }: Props) {
       .then((d: PlaylistItem[]) => {
         const list = Array.isArray(d) ? d : [];
         setPlaylists(list);
-        setPid((cur) => (cur === '' && list.length ? list[0].id : cur));
+        // open with the user-configured default playlist (fallback: first)
+        setPid((cur) => (cur === '' && list.length ? (list.find((p) => p.is_default) || list[0]).id : cur));
       })
       .catch(() => {});
   }, []);
@@ -170,6 +182,20 @@ export default function Search({ authed }: Props) {
     () => classifiers.filter((c) => c.field_type),
     [classifiers],
   );
+  // Per-playlist counts of CURRENT values, from the loaded tracks - so the
+  // filter labels track the selected playlist (c.stats is global).
+  const perCls = useMemo(() => {
+    const m: Record<number, { current: number; trueCount: number }> = {};
+    for (const c of activeClassifiers) {
+      let cur = 0, tr = 0;
+      for (const t of tracks) {
+        const v = t.classifications?.[String(c.id)];
+        if (v && !v.stale) { cur++; if (c.field_type === 'boolean' && v.value === true) tr++; }
+      }
+      m[c.id] = { current: cur, trueCount: tr };
+    }
+    return m;
+  }, [tracks, activeClassifiers]);
   const filterActive = Boolean(q || f.artist || f.album || f.title || f.minYear || f.maxYear || f.minDur || f.maxDur || f.language || Object.values(f.ai).some((v) => v !== undefined && v !== '' && v !== false));
 
   // Precompute the fuzzy haystack once per track load.
@@ -249,6 +275,46 @@ export default function Search({ authed }: Props) {
 
   const current = playlists.find((p) => p.id === pid);
 
+  // Serialize the current filter state as the generated playlist's search spec
+  // (same semantics the page applies client-side; the server resolves it the
+  // same way at sync time).
+  const buildSpec = () => {
+    const ai: Record<string, any> = {};
+    for (const [cid, v] of Object.entries(f.ai)) {
+      if (v === undefined || v === '' || v === false) continue;
+      if (typeof v === 'object' && !v?.min && !v?.max) continue;
+      ai[cid] = v;
+    }
+    return {
+      q,
+      artist: f.artist, album: f.album, title: f.title,
+      min_year: f.minYear ? Number(f.minYear) : null,
+      max_year: f.maxYear ? Number(f.maxYear) : null,
+      min_dur_s: f.minDur ? Number(f.minDur) : null,
+      max_dur_s: f.maxDur ? Number(f.maxDur) : null,
+      language: f.language,
+      classifier_filters: ai,
+    };
+  };
+
+  const doSave = async () => {
+    if (!pid) return;
+    setSaveBusy(true); setSaveError('');
+    try {
+      const r: any = await api.generatedCreate({
+        name: saveName.trim() || 'Saved search',
+        description: saveDesc.trim(),
+        source_playlist_id: Number(pid),
+        search_spec: buildSpec(),
+        preview_mode: savePreview,
+        sync_mode: saveMode,
+      });
+      setSaveOpen(false);
+      setSavedNotice('Saved — "' + (saveName.trim() || 'Saved search') + '" now matches ' + (r.track_count ?? '?') + ' track(s). Manage it on the Generate tab.');
+    } catch (e: any) { setSaveError(e?.message || String(e)); }
+    finally { setSaveBusy(false); }
+  };
+
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1.5, flexWrap: 'wrap' }}>
@@ -260,6 +326,9 @@ export default function Search({ authed }: Props) {
           {loading ? 'loading…' : `${sorted.length.toLocaleString()} of ${tracks.length.toLocaleString()} tracks`}
         </Typography>
         {filterActive ? <Button size="small" onClick={clearAll} sx={{ pb: '9px' }}>Clear</Button> : null}
+        <Button size="small" variant="outlined" startIcon={<SaveAltIcon />} onClick={() => setSaveOpen(true)} disabled={!pid} sx={{ pb: '9px' }}>
+          Save as generated playlist
+        </Button>
         <TextField
           select size="small" label="Playlist" value={pid}
           onChange={(e) => { setPid(Number(e.target.value)); setPage(0); setQuery(''); setF(baseFilters(EMPTY_AI)); }}
@@ -324,7 +393,7 @@ export default function Search({ authed }: Props) {
           </Box>
           {activeClassifiers.map((c) => {
             const want = f.ai[c.id];
-            const stats = c.stats || { current: 0, true_count: 0 };
+            const counts = perCls[c.id] || { current: 0, trueCount: 0 };
             if (c.field_type === 'boolean') {
               return (
                 <FormControlLabel
@@ -332,7 +401,7 @@ export default function Search({ authed }: Props) {
                   control={<Checkbox size="small" checked={want === true} onChange={(e) => setAi(c.id, e.target.checked)} />}
                   label={
                     <Tooltip title={c.query}>
-                      <Typography variant="body2">{c.name} <Typography component="span" variant="caption" color="text.secondary">({stats.true_count ?? 0} true)</Typography></Typography>
+                      <Typography variant="body2">{c.name} <Typography component="span" variant="caption" color="text.secondary">({counts.trueCount.toLocaleString()} true here)</Typography></Typography>
                     </Tooltip>
                   }
                 />
@@ -532,6 +601,44 @@ export default function Search({ authed }: Props) {
           );
         })()}
       </Dialog>
+
+      <Dialog open={saveOpen} onClose={() => setSaveOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Save as generated playlist</DialogTitle>
+        <DialogContent>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
+            <Typography variant="body2" color="text.secondary">
+              Saves this exact search (fuzzy text, metadata and AI filters) on
+              "{current ? current.name : 'the playlist'}" as a generated playlist
+              you can sync to Spotify — manage it on the Generate tab.
+            </Typography>
+            <TextField size="small" label="Name" value={saveName} onChange={(e) => setSaveName(e.target.value)}
+              inputProps={{ 'aria-label': 'generated name' }} />
+            <TextField size="small" label="Description (optional)" value={saveDesc} onChange={(e) => setSaveDesc(e.target.value)}
+              inputProps={{ 'aria-label': 'generated description' }} />
+            <FormControlLabel
+              control={<Checkbox size="small" checked={savePreview} onChange={(e) => setSavePreview(e.target.checked)} />}
+              label={
+                <Typography variant="body2">
+                  Preview mode — show what <b>would</b> sync as a diff; write nothing to Spotify
+                </Typography>
+              }
+            />
+            <TextField size="small" select label="Sync" value={saveMode} onChange={(e) => setSaveMode(e.target.value)} sx={{ width: 340 }}>
+              <MenuItem value="once">Manual only (I sync when I want)</MenuItem>
+              <MenuItem value="ongoing">Ongoing (auto re-sync about every 30 min)</MenuItem>
+            </TextField>
+            {saveError ? <Alert severity="error">{saveError}</Alert> : null}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSaveOpen(false)}>Cancel</Button>
+          <Button variant="contained" onClick={doSave} disabled={saveBusy}>
+            {saveBusy ? 'Saving…' : 'Save'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {savedNotice ? <Alert severity="success" sx={{ mt: 2 }} onClose={() => setSavedNotice('')}>{savedNotice}</Alert> : null}
     </Box>
   );
 }

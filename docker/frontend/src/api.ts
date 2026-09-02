@@ -44,8 +44,15 @@ export const api = {
     req('/classifiers/track-search?q=' + encodeURIComponent(q) + '&limit=' + limit),
   randomTracksForPreview: (limit = 20) =>
     req('/classifiers/random-tracks?limit=' + limit),
+  setDefaultPlaylist: (id: number) => req(`/playlists/${id}/default`, { method: 'POST' }),
+  generated: () => req('/generated'),
+  generatedCreate: (body: any) => req('/generated', { method: 'POST', body: JSON.stringify(body) }),
+  generatedUpdate: (id: number, body: any) => req(`/generated/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  generatedDelete: (id: number) => req(`/generated/${id}`, { method: 'DELETE' }),
+  generatedSync: (id: number, dryRun: boolean) =>
+    req(`/generated/${id}/sync`, { method: 'POST', body: JSON.stringify({ dry_run: dryRun }) }),
+  generatedReread: (id: number) => req(`/generated/${id}/reread`, { method: 'POST' }),
   generate: (body: any) => req('/generate', { method: 'POST', body: JSON.stringify(body) }),
-  runs: () => req('/runs'),
   saveCredentials: (client_id: string, client_secret: string) =>
     req('/spotify/credentials', { method: 'POST', body: JSON.stringify({ client_id, client_secret }) }),
   getCredentials: () => req('/spotify/credentials'),
@@ -123,6 +130,7 @@ export type PlaylistItem = {
   external_url: string;
   fetched_at: string;
   track_count: number;
+  is_default?: boolean;
   download_state?: 'idle' | 'queued' | 'downloading' | 'waiting_quota' | 'done' | 'error';
   download_saved?: number;
   download_total?: number;

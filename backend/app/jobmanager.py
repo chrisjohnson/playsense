@@ -78,6 +78,46 @@ def _tick() -> None:
         db.commit()
     finally:
         db.close()
+    # Independent of the LLM job loop: a Spotify failure here must never break
+    # classifier stepping, and it needs its own session.
+    try:
+        _maybe_sync_generated()
+    except Exception:
+        logger.exception("generated-playlist auto-sync cycle failed")
+
+
+GENERATED_SYNC_INTERVAL_SECS = 1800  # ongoing generated playlists re-sync ~30min
+_last_generated_sync = 0.0
+
+
+def _maybe_sync_generated() -> None:
+    """Re-sync generated playlists with sync_mode='ongoing' and preview_mode
+    off, on a ~30-minute cadence. A sync costs only its write calls (the
+    baseline is tracked in last_synced_uris, no Spotify reads)."""
+    global _last_generated_sync
+    import time as _time
+    now = _time.monotonic()
+    if now - _last_generated_sync < GENERATED_SYNC_INTERVAL_SECS:
+        return
+    _last_generated_sync = now
+    from .models import GeneratedPlaylist
+    from .api.generated import sync_generated_row
+    db = SessionLocal()
+    try:
+        gps = (db.query(GeneratedPlaylist)
+               .filter(GeneratedPlaylist.sync_mode == "ongoing",
+                       GeneratedPlaylist.preview_mode == False)  # noqa: E712
+               .all())
+        for gp in gps:
+            try:
+                sync_generated_row(db, gp, dry_run=False)
+                db.commit()
+                logger.info("generated playlist %r auto-synced", gp.name)
+            except Exception:
+                db.rollback()
+                logger.exception("generated playlist %r auto-sync failed", gp.name)
+    finally:
+        db.close()
 
 
 def _needing(db, cls: Classifier, playlist_id: int) -> int:

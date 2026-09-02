@@ -15,6 +15,7 @@ class PlaylistOut(BaseModel):
     external_url: str = ""
     fetched_at: Optional[datetime] = None
     track_count: int = 0
+    is_default: bool = False
 
     model_config = {"from_attributes": True}
 

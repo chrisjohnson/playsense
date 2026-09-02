@@ -11,44 +11,34 @@ import Chip from '@mui/material/Chip';
 import Home from './pages/Home';
 import Search from './pages/Search';
 import Generate from './pages/Generate';
-import Runs from './pages/Runs';
-import Tracks from './pages/Tracks';
 import Classifiers from './pages/Classifiers';
 import { api } from './api';
 
-export type TabName = 'home' | 'search' | 'generate' | 'runs' | 'tracks' | 'ai';
+export type TabName = 'home' | 'search' | 'generate' | 'ai';
 
-// Tabs are reflected in the URL hash (#/search, #/tracks/4, ...) so refresh and
+// Tabs are reflected in the URL hash (#/search, #/generate, ...) so refresh and
 // back/forward keep you where you were.
-const VALID_TABS: TabName[] = ['home', 'search', 'generate', 'ai', 'runs', 'tracks'];
+const VALID_TABS: TabName[] = ['home', 'search', 'generate', 'ai'];
 
-function parseHash(): { tab: TabName; tracksId: number | null } {
+function parseHash(): TabName {
   const h = window.location.hash.replace(/^#\/?/, '');
-  if (h === '' || h === 'home') return { tab: 'home', tracksId: null };
-  const [t, idPart] = h.split('/');
-  if (t === 'tracks') {
-    const id = idPart ? Number(idPart) : null;
-    if (id === null || (Number.isInteger(id) && id > 0)) return { tab: 'tracks', tracksId: id };
-  } else if ((VALID_TABS as string[]).includes(t)) {
-    return { tab: t as TabName, tracksId: null };
-  }
-  return { tab: 'home', tracksId: null };
+  if (h === '' || h === 'home') return 'home';
+  const t = h.split('/')[0];
+  return (VALID_TABS as string[]).includes(t) ? (t as TabName) : 'home';
 }
 
-function hashFor(tab: TabName, tracksId: number | null): string {
-  if (tab === 'tracks' && tracksId) return `#/tracks/${tracksId}`;
+function hashFor(tab: TabName): string {
   if (tab === 'home') return '#/';
-  return `#/${tab}`;
+  return '#/' + tab;
 }
 
 export default function App() {
-  const [tab, setTabState] = useState<TabName>(() => parseHash().tab);
-  const [tracksId, setTracksId] = useState<number | null>(() => parseHash().tracksId);
+  const [tab, setTabState] = useState<TabName>(() => parseHash());
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [display, setDisplay] = useState('');
   const [authUrl, setAuthUrl] = useState('');
   const [configured, setConfigured] = useState<boolean>(false);
-  const [oauthMsg, setOauthMsg] = useState<string>('');
+  const [oauthMsg, setOauthMsg] = useState('');
 
   const refreshAuth = async () => {
     try {
@@ -97,32 +87,23 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Tab change: state only. The effect below is the single hash writer, so a
-  // tab change can never produce two (or a spurious) history entry.
-  const setTab = (t: TabName, tid: number | null = tracksId) => {
-    setTabState(t);
-    setTracksId(tid);
-  };
+  const setTab = (t: TabName) => setTabState(t);
 
-  // Hash <-> state sync. One writer: whenever state changes, make the URL hash
-  // match (this also covers the tracks page changing playlist in place).
+  // Hash <-> state sync. One writer: whenever the tab changes, make the URL
+  // hash match (no spurious history entries).
   useEffect(() => {
-    const want = hashFor(tab, tab === 'tracks' ? tracksId : null);
+    const want = hashFor(tab);
     if (window.location.hash !== want) window.location.hash = want;
-  }, [tab, tracksId]);
+  }, [tab]);
 
   // Browser back/forward or a manual hash edit (e.g. pasted link) -> state.
   useEffect(() => {
-    const onHash = () => {
-      const p = parseHash();
-      setTabState(p.tab);
-      if (p.tab === 'tracks') setTracksId(p.tracksId);
-    };
+    const onHash = () => setTabState(parseHash());
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  const tabs: TabName[] = ['home', 'search', 'generate', 'ai', 'runs', 'tracks'];
+  const tabs: TabName[] = ['home', 'search', 'generate', 'ai'];
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
@@ -150,12 +131,10 @@ export default function App() {
         </Tabs>
       </AppBar>
       <Container maxWidth="xl" sx={{ flexGrow: 1, py: 3 }}>
-        {tab === 'home' && <Home onOpenTracks={(id) => { setTracksId(id); setTab('tracks', id); }} authUrl={authUrl} onAuthed={setAuthed} configured={configured} onRefresh={refreshAuth} authed={!!authed} display={display} oauthMsg={oauthMsg} />}
+        {tab === 'home' && <Home authUrl={authUrl} onAuthed={setAuthed} configured={configured} onRefresh={refreshAuth} authed={!!authed} display={display} oauthMsg={oauthMsg} />}
         {tab === 'search' && <Search authed={!!authed} />}
         {tab === 'generate' && <Generate authed={!!authed} />}
         {tab === 'ai' && <Classifiers />}
-        {tab === 'runs' && <Runs />}
-        {tab === 'tracks' && <Tracks initialId={tracksId} onPick={(id) => setTracksId(id)} />}
       </Container>
     </Box>
   );

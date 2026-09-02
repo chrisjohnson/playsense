@@ -44,6 +44,10 @@ class Playlist(Base):
     download_error = Column(String(1024), default="")
     download_updated_at = Column(DateTime, nullable=True)
 
+    # The playlist other pages (Search, ...) open by default. At most one
+    # playlist carries this flag (set via POST /playlists/{id}/default).
+    is_default = Column(Boolean, default=False)
+
     user = relationship("User", back_populates="playlists")
     tracks = relationship("Track", back_populates="playlist", cascade="all, delete-orphan")
 
@@ -169,6 +173,26 @@ class ClassifierJob(Base):
     __table_args__ = (
         Index("ix_cj_scope_status", "classifier_id", "playlist_id", "status"),
     )
+
+
+class GeneratedPlaylist(Base):
+    __tablename__ = "generated_playlists"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, default="")
+    source_playlist_id = Column(Integer, ForeignKey("playlists.id"), nullable=False)
+    search_spec = Column(Text, default="{}")
+    preview_mode = Column(Boolean, default=True)
+    sync_mode = Column(String(16), default="once")
+    spotify_playlist_id = Column(String(64), nullable=True)
+    spotify_external_url = Column(String(1024), default="")
+    last_synced_uris = Column(Text, default="[]")
+    last_synced_at = Column(DateTime, nullable=True)
+    last_sync_status = Column(String(512), default="")
+    created_at = Column(DateTime, default=utcnow)
+
+    source_playlist = relationship("Playlist")
 
 
 class ClassificationRun(Base):
