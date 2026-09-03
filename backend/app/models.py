@@ -66,6 +66,15 @@ class Track(Base):
     uri = Column(String(256), default="")
     external_url = Column(String(1024), default="")
     isrc = Column(String(64), index=True)
+    # Extra metadata from the playlist-items payload (stored 2026-09; backfill
+    # by re-downloading a playlist - no extra API calls per track).
+    explicit = Column(Boolean, nullable=True)
+    disc_number = Column(Integer, nullable=True)
+    track_number = Column(Integer, nullable=True)
+    album_type = Column(String(16), nullable=True)  # album / single / compilation
+    release_date_precision = Column(String(8), nullable=True)  # year / month / day
+    album_images = Column(Text, nullable=True)  # JSON: [{url,width,height},...]
+    album_artists = Column(Text, nullable=True)  # JSON: [{id,name,uri},...]
 
     playlist_track_index = Column(Integer, default=0)
     playlist_id = Column(Integer, ForeignKey("playlists.id"), nullable=False)

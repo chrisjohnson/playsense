@@ -98,6 +98,14 @@ full. Design around them, do not fight them:
   - **Response field renames:** playlist entries carry the track object under
     `items[].item` (the old `items[].track` key comes back **null**). Code must
     read `entry.get("track") or entry.get("item")`. `popularity` field removed.
+  - The items payload also carries `explicit`, `disc_number`, `track_number`,
+    `album.{album_type,total_tracks,release_date_precision,images,artists}`.
+    All are STORED on tracks (2026-09); backfill by re-downloading a playlist
+    (POST /playlists/{id}/download - same calls as any sync, no per-track
+    extra). Hydration endpoints (`/artists/{id}`, `/albums/{id}`,
+    `/tracks/{id}`) add NOTHING in dev mode: genres/popularity/audio features
+    are blanked server-side (verified 2026-09: 10/10 flagship albums return
+    `genres: []`). Do not build a phase-2 hydrator until the app leaves dev mode.
   - Search `limit` max dropped 50 -> 10. `/me` no longer returns email/country.
     Other users' playlists/profiles: metadata only.
   - Dev mode requires the app owner to have Premium; <=5 authorized users per app.
@@ -159,7 +167,11 @@ full. Design around them, do not fight them:
   schema + per-value validation, per-chunk commit), auto-scans for new work
   (new classifiers / revision staleness / new tracks) and retries errors
   after a backoff. Cancelling a job is also a PAUSE (suppresses the auto-
-  scan for that scope); a revision bump lifts the pause. Do NOT reintroduce
+  scan for that scope); a revision bump lifts the pause. Each track line in
+  the batch prompt carries title/artists/album/year/duration_s plus, when
+  present and non-default, `explicit=yes|no`, `album_artists=[...]` (only if
+  it differs from the track artists - compilation signal) and
+  `album_type=single|compilation` (only if not plain album). Do NOT reintroduce
   query-time LLM calls on the search path.
 - The old heuristic classification columns (is_mexican/is_latin_american/
   region/language/classification_strategy) and the one-shot /classify +

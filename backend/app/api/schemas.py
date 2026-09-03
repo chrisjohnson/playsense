@@ -30,16 +30,24 @@ class TrackOut(BaseModel):
     duration_ms: Optional[int] = None
     uri: str = ""
     external_url: str = ""
+    explicit: Optional[bool] = None
+    disc_number: Optional[int] = None
+    track_number: Optional[int] = None
+    album_type: Optional[str] = None
+    release_date_precision: Optional[str] = None
+    album_images: Any = []
+    album_artists: Any = []
     # AI-classifier values: {"<classifier_id>": {"value": <json>, "stale": bool, "reason": str}}
     classifications: dict = {}
 
     model_config = {"from_attributes": True}
 
-    @field_validator("artists", mode="before")
+    @field_validator("artists", "album_artists", "album_images", mode="before")
     @classmethod
     def _parse_json_lists(cls, v):
-        # artists is stored as JSON text on the model; the API must
-        # return it as an array (the frontend .map()s over it).
+        # artists / album_artists / album_images are stored as JSON text on the
+        # model; the API must return them as arrays (the frontend .map()s over
+        # artists).
         if isinstance(v, str):
             try:
                 return _json.loads(v) or []

@@ -32,3 +32,11 @@ def init_db():
             if "is_default" not in cols:
                 conn.execute(text("ALTER TABLE playlists ADD COLUMN is_default BOOLEAN DEFAULT 0"))
                 conn.commit()
+            tcols = {c["name"] for c in inspect(conn).get_columns("tracks")}
+            for col, decl in (("explicit", "BOOLEAN"), ("disc_number", "INTEGER"),
+                              ("track_number", "INTEGER"), ("album_type", "VARCHAR(16)"),
+                              ("release_date_precision", "VARCHAR(8)"),
+                              ("album_images", "TEXT"), ("album_artists", "TEXT")):
+                if col not in tcols:
+                    conn.execute(text(f"ALTER TABLE tracks ADD COLUMN {col} {decl}"))
+            conn.commit()

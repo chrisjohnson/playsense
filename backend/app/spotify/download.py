@@ -202,6 +202,15 @@ def download_playlist(api: SpotifyAPI, playlist_db_id: int) -> dict:
                 track.album_name = album.get("name", "")
                 track.album_id = album.get("id", "")
                 track.release_date = str(album.get("release_date", "") or "")
+                track.explicit = t.get("explicit")
+                track.disc_number = t.get("disc_number")
+                track.track_number = t.get("track_number")
+                track.album_type = album.get("album_type") or album.get("type")
+                track.release_date_precision = album.get("release_date_precision")
+                track.album_images = json.dumps(album.get("images") or [])
+                track.album_artists = json.dumps(
+                    [{"id": a.get("id", ""), "name": a.get("name", ""), "uri": a.get("uri", "")}
+                     for a in (album.get("artists") or [])])
                 track.duration_ms = t.get("duration_ms")
                 track.uri = t.get("uri", "")
                 track.external_url = (t.get("external_urls") or {}).get("spotify", "")

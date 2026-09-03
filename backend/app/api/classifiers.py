@@ -130,9 +130,23 @@ def _track_line(i: int, t: Track) -> str:
     except (json.JSONDecodeError, AttributeError):
         artists = []
     dur_s = round(t.duration_ms / 1000) if t.duration_ms else None
-    return (f"{i}: title=\"{t.name}\" artists=[{', '.join(artists)}] "
-            f"album=\"{t.album_name or '?'}\" year={ (t.release_date or '?')[:4] } "
+    line = (f"{i}: title=\"{t.name}\" artists=[{', '.join(artists)}] "
+            f"album=\"{t.album_name or '?'}\" year={(t.release_date or '?')[:4]} "
             f"duration_s={dur_s}")
+    # Extra context when it changes the answer: who the ALBUM is by (matters
+    # for compilations, where track artists are often featured guests), whether
+    # the content is explicit, and single/compilation vs album.
+    try:
+        aas = [a.get("name", "") for a in json.loads(t.album_artists or "[]") if isinstance(a, dict)]
+    except (json.JSONDecodeError, AttributeError):
+        aas = []
+    if aas and aas != artists:
+        line += f" album_artists=[{', '.join(aas)}]"
+    if t.explicit is not None:
+        line += " explicit=yes" if t.explicit else " explicit=no"
+    if t.album_type and t.album_type != "album":
+        line += f" album_type={t.album_type}"
+    return line
 
 
 def _artists_list(t: Track) -> list[str]:
