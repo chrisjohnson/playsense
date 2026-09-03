@@ -132,16 +132,16 @@ full. Design around them, do not fight them:
   your own shell (it IS visible at your workspace path) and pass bare
   `-e INFERENCE_BASE_URL -e INFERENCE_MODEL -e INFERENCE_API_KEY` (values
   come from the shell env and never touch the command line).
-- LiteLLM proxy runs on the HOST's 127.0.0.1:4000 (host networking, not
-  reachable from containers). The `litellm-fwd` container (socat, host
-  networking, binds 172.17.0.1:4001 -> 127.0.0.1:4000) exposes it to the docker
-  bridges; api reaches it at `http://172.17.0.1:4001/v1`. Recreate it with:
-  `docker run -d --name litellm-fwd --restart unless-stopped --network host
-  alpine:3.20 sh -c 'apk add --no-cache socat; exec socat
-  TCP-LISTEN:4001,bind=172.17.0.1,fork,reuseaddr TCP:127.0.0.1:4000'`
-  As of now the host's own litellm stack (litellm-proxy + queue haproxies)
-  serves 172.17.0.1:4001 directly; use the socat recipe only if that goes
-  away. medium-moe answers small prompts but is flaky on the large
+- LiteLLM proxy runs on the HOST (host networking, listens 0.0.0.0:4000).
+  api connects DIRECTLY at `http://172.17.0.1:4000/v1` (no queue, no
+  forwarder): the host firewall must allow docker-bridge (172.17.0.0/16) ->
+  host 4000/tcp (opened 2026-09; if bridge->4000 starts timing out while
+  4001 still answers, that rule was dropped). The host's
+  litellm-queue-haproxy containers (:4001 strix-apu, :4002 r9700-egpu-dock)
+  serialize with maxconn 1 BY DESIGN for DSH workloads - do not route
+  playsense through them. Legacy: a `litellm-fwd` socat container used to
+  expose the proxy to the bridges; it is gone, the direct path replaced it.
+  medium-moe answers small prompts but is flaky on the large
   relevance/classification batches while it is being developed - the app
   falls back to keyword mode per search, which is the expected behavior.
 - **Mock LLM for dev**: `python3 backend/tests/mock_llm_server.py [port]`
@@ -169,11 +169,11 @@ full. Design around them, do not fight them:
   CLASSIFIER_CHUNK_CONCURRENCY env): worker threads do pure LLM I/O with the
   per-chunk retry, the main thread owns the DB session (rows applied in
   completion order, same-transaction progress invariant, cancel checked per
-  chunk). Caveat (2026-09): the host's litellm-queue-haproxy on :4001
-  serializes with maxconn 1 by design, so end-to-end throughput still equals
-  single-request speed until that cap is raised - the app-side concurrency is
-  verified working (fake-LLM test: 2.7x at 3 concurrent) and will pay off
-  when the queue allows >1 in flight. Cancelling a job is also a PAUSE (suppresses the auto-
+  chunk). Verified live 2026-09 on the direct litellm connection: a 200-track scope
+  ran in ~140s vs ~240s serial (about 1.7x); 3-way concurrency at the
+  litellm+server level is proven (requests_processing=3, 3x80s requests in
+  81s wall) - the remaining headroom on large classification prefills is
+  model-side tuning (prefill batching), not app-side. Cancelling a job is also a PAUSE (suppresses the auto-
   scan for that scope); a revision bump lifts the pause. Each track line in
   the batch prompt carries title/artists/album/year/duration_s plus, when
   present and non-default, `explicit=yes|no`, `album_artists=[...]` (only if
