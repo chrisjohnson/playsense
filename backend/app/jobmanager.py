@@ -30,7 +30,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, update
 
 from .db import SessionLocal
 from .models import Classifier, ClassifierJob, Playlist, Track, TrackClassification
@@ -164,6 +164,19 @@ def _summarize_error(msg: str) -> str:
     return (msg or "unknown error")[:300]
 
 
+def _settle_cancel_or_fail(db, job: ClassifierJob, fail_fn) -> None:
+    """The pass raised (LLM/transport failure). If a cancel landed during the
+    pass, the user's intent to stop wins - settle to cancelled, don't error."""
+    db.refresh(job)
+    if job.status == "cancelling":
+        job.status = "cancelled"
+        job.finished_at = _now()
+        logger.info("classifier job %s cancelled (pass failed mid-cancel, done=%s)",
+                    job.id, job.done)
+    else:
+        fail_fn()
+
+
 def _fail(job: ClassifierJob, msg: str) -> None:
     job.status = "error"
     job.error = _summarize_error(msg)
@@ -206,20 +219,35 @@ def _step_job(db) -> None:
         res = run_classifier_pass(cls, playlist_id=job.playlist_id, limit=PASS_SIZE,
                                   offset=0, db=db, job=job)
     except HTTPException as e:
-        _fail(job, str(e.detail))
+        _settle_cancel_or_fail(db, job, lambda: _fail(job, str(e.detail)))
     except Exception as e:
-        _fail(job, f"{type(e).__name__}: {str(e)[:400]}")
+        _settle_cancel_or_fail(db, job, lambda: _fail(job, f"{type(e).__name__}: {str(e)[:400]}"))
     else:
         # progress was applied per chunk by the pass itself
-        if res["processed"] == 0:
-            job.status = "done"
-            job.finished_at = _now()
-            logger.info("classifier job %s done: classified=%s failed=%s",
-                        job.id, job.done, job.failed)
-        elif job.status == "cancelling":
+        # A concurrent cancel flips the DB status from another session, so the
+        # in-memory row is stale; re-read it. Cancellation ALWAYS wins over
+        # "no work left" - a pass that ran out of tracks while the user was
+        # cancelling must not mark the job done and silently drop the cancel.
+        db.refresh(job)
+        if job.status == "cancelling":
             job.status = "cancelled"
             job.finished_at = _now()
-            logger.info("classifier job %s cancelled after pass (done=%s)", job.id, job.done)
+            logger.info("classifier job %s cancelled (done=%s)", job.id, job.done)
+        elif res["processed"] == 0:
+            # Guarded write: claim "done" only if the row is still running.
+            # If a cancel committed between the refresh and this UPDATE the
+            # WHERE misses, nothing is written, and the next tick settles it
+            # to cancelled - a cancel can never be silently dropped.
+            now = _now()
+            n = db.execute(update(ClassifierJob).where(
+                ClassifierJob.id == job.id,
+                ClassifierJob.status == "running",
+            ).values(status="done", finished_at=now)).rowcount
+            if n:
+                job.status = "done"
+                job.finished_at = now
+                logger.info("classifier job %s done: classified=%s failed=%s",
+                            job.id, job.done, job.failed)
     db.commit()
 
 

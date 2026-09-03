@@ -193,7 +193,17 @@ def run_classifier_pass(cls: Classifier, playlist_id: int | None = None,
         system = _system_prompt(cls.query, cls.field_type)
 
         done = ok = failed = 0
+        cancelled = False
         for i in range(0, len(tracks), CHUNK_SIZE):
+            # Cancellation is cooperative but checked at CHUNK granularity:
+            # a concurrent cancel flips the DB status from another session, so
+            # re-read it (the in-memory job row goes stale during the long LLM
+            # calls). Stop before starting the next chunk.
+            if job is not None:
+                db.refresh(job)
+                if job.status == "cancelling":
+                    cancelled = True
+                    break
             chunk_ok = chunk_failed = 0
             chunk = tracks[i:i + CHUNK_SIZE]
             lines = "\n".join(_track_line(j, t) for j, t in enumerate(chunk))
@@ -216,7 +226,14 @@ def run_classifier_pass(cls: Classifier, playlist_id: int | None = None,
                         raise
                     logger.warning("classifier %s chunk %d attempt %d/%d failed: %s - retrying in %ds",
                                    cls.id, i // CHUNK_SIZE, attempt, CHUNK_RETRIES, str(e)[:150], CHUNK_RETRY_WAIT)
+                    if job is not None:
+                        db.refresh(job)
+                        if job.status == "cancelling":
+                            cancelled = True
+                            break
                     time.sleep(CHUNK_RETRY_WAIT)
+            if cancelled:
+                break
             entries = {e.get("index"): e for e in (data.get("results") or []) if isinstance(e, dict)}
             for j, t in enumerate(chunk):
                 done += 1

@@ -116,8 +116,10 @@ def cancel_job(job_id: int, db=Depends(get_db)):
         job.status = "cancelled"
         job.finished_at = utcnow()
     elif job.status == "running":
-        # cooperative: the manager honors it between passes
+        # cooperative: the manager honors it at the next chunk boundary
         job.status = "cancelling"
+    elif job.status == "cancelling":
+        pass  # already stopping - idempotent, no-op
     else:
         raise HTTPException(409, f"Job is not active (status={job.status})")
     db.commit()
