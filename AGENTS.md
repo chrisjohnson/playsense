@@ -164,9 +164,16 @@ full. Design around them, do not fight them:
   instant and never flaky. AI metadata is produced by the background job
   manager (`app/jobmanager.py` + `app/api/classifier_jobs.py`): a daemon
   thread steps ONE classifier job at a time (25 tracks/LLM call, strict JSON
-  schema + per-value validation, per-chunk commit), auto-scans for new work
-  (new classifiers / revision staleness / new tracks) and retries errors
-  after a backoff. Cancelling a job is also a PAUSE (suppresses the auto-
+  schema + per-value validation, per-chunk commit). Chunks inside a pass run
+  CONCURRENTLY (up to classifier_chunk_concurrency, default 3 - set via the
+  CLASSIFIER_CHUNK_CONCURRENCY env): worker threads do pure LLM I/O with the
+  per-chunk retry, the main thread owns the DB session (rows applied in
+  completion order, same-transaction progress invariant, cancel checked per
+  chunk). Caveat (2026-09): the host's litellm-queue-haproxy on :4001
+  serializes with maxconn 1 by design, so end-to-end throughput still equals
+  single-request speed until that cap is raised - the app-side concurrency is
+  verified working (fake-LLM test: 2.7x at 3 concurrent) and will pay off
+  when the queue allows >1 in flight. Cancelling a job is also a PAUSE (suppresses the auto-
   scan for that scope); a revision bump lifts the pause. Each track line in
   the batch prompt carries title/artists/album/year/duration_s plus, when
   present and non-default, `explicit=yes|no`, `album_artists=[...]` (only if

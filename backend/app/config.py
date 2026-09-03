@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     inference_model: str = "llama3.1:8b"
     inference_timeout_seconds: float = 300.0  # read timeout; connect is capped at 15s
     semantic_confidence_threshold: float = 0.85
+    # Classifier passes run up to this many 25-track LLM calls concurrently
+    # (fill the model server's -np slots; default 3). DB writes stay on the
+    # main thread, so inference and batch cleanup overlap.
+    classifier_chunk_concurrency: int = 3
 
     # ---- App ----
     worker_concurrency: int = 4

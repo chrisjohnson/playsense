@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import logging
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func
 
+from ..config import get_settings
 from ..db import SessionLocal
 from ..models import Track, Classifier, TrackClassification
 from ..inference.adapter import InferenceAdapter
@@ -206,78 +208,104 @@ def run_classifier_pass(cls: Classifier, playlist_id: int | None = None,
         schema = schema_for(cls.field_type)
         system = _system_prompt(cls.query, cls.field_type)
 
-        done = ok = failed = 0
-        cancelled = False
-        for i in range(0, len(tracks), CHUNK_SIZE):
-            # Cancellation is cooperative but checked at CHUNK granularity:
-            # a concurrent cancel flips the DB status from another session, so
-            # re-read it (the in-memory job row goes stale during the long LLM
-            # calls). Stop before starting the next chunk.
-            if job is not None:
-                db.refresh(job)
-                if job.status == "cancelling":
-                    cancelled = True
-                    break
-            chunk_ok = chunk_failed = 0
-            chunk = tracks[i:i + CHUNK_SIZE]
-            lines = "\n".join(_track_line(j, t) for j, t in enumerate(chunk))
-            user = f"Classification question: {cls.query}\n\nTracks:\n{lines}"
+        chunks = [tracks[i:i + CHUNK_SIZE] for i in range(0, len(tracks), CHUNK_SIZE)]
+        # Build every prompt on the main thread: worker threads then do pure
+        # LLM I/O (no DB, no ORM objects), so sharing the adapter is safe -
+        # it opens a fresh httpx client per call.
+        prompts = [
+            f"Classification question: {cls.query}\n\nTracks:\n"
+            + "\n".join(_track_line(j, t) for j, t in enumerate(chunk))
+            for chunk in chunks
+        ]
+
+        def _call_chunk(ci: int) -> dict:
             # Chunk-level retry: the model flaps (HTTP 500 / empty content /
             # malformed JSON) on single calls. A quick inline retry clears the
             # blip without idling the whole job for the 5-min backoff; if all
             # attempts fail the pass raises and the job-level backoff takes over.
-            data = None
             for attempt in range(1, CHUNK_RETRIES + 1):
                 try:
                     content = llm.chat_structured([
                         {"role": "system", "content": system},
-                        {"role": "user", "content": user},
+                        {"role": "user", "content": prompts[ci]},
                     ], schema)
-                    data = json.loads(content)
-                    break
+                    return json.loads(content)
                 except Exception as e:
                     if attempt >= CHUNK_RETRIES:
                         raise
                     logger.warning("classifier %s chunk %d attempt %d/%d failed: %s - retrying in %ds",
-                                   cls.id, i // CHUNK_SIZE, attempt, CHUNK_RETRIES, str(e)[:150], CHUNK_RETRY_WAIT)
-                    if job is not None:
-                        db.refresh(job)
-                        if job.status == "cancelling":
-                            cancelled = True
-                            break
+                                   cls.id, ci, attempt, CHUNK_RETRIES, str(e)[:150], CHUNK_RETRY_WAIT)
                     time.sleep(CHUNK_RETRY_WAIT)
-            if cancelled:
-                break
-            entries = {e.get("index"): e for e in (data.get("results") or []) if isinstance(e, dict)}
-            for j, t in enumerate(chunk):
-                done += 1
-                e = entries.get(j)
-                if e is None:
-                    failed += 1
-                    chunk_failed += 1
-                    continue
-                good, val_json = validate_value(cls.field_type, e.get("value"))
-                if not good:
-                    failed += 1
-                    chunk_failed += 1
-                    continue
-                row = db.query(TrackClassification).filter_by(
-                    track_id=t.id, classifier_id=cls.id).first()
-                if row is None:
-                    row = TrackClassification(track_id=t.id, classifier_id=cls.id)
-                    db.add(row)
-                row.classifier_revision = cls.revision
-                row.value = val_json
-                row.reason = str(e.get("reason") or "")[:300]
-                row.classified_at = datetime.utcnow()
-                ok += 1
-                chunk_ok += 1
-            if job is not None:
-                # apply progress in the SAME transaction as the rows, so the
-                # job count and the data never disagree (and survive restarts)
-                job.done = (job.done or 0) + chunk_ok
-                job.failed = (job.failed or 0) + chunk_failed
-            db.commit()  # per-chunk commit: partial work survives LLM failures
+
+        done = ok = failed = 0
+        cancelled = False
+        # Run up to N chunks (25-track LLM calls) concurrently: the model
+        # server keeps its -np slots busy instead of idling, and DB writes
+        # happen on the main thread between completions, so inference and
+        # batch cleanup overlap. N = classifier_chunk_concurrency (default 3).
+        conc = max(1, min(get_settings().classifier_chunk_concurrency, len(chunks))) if chunks else 1
+        # Pre-start cancel check (the sequential loop checked before every
+        # chunk, including the first - keep that).
+        if job is not None:
+            db.refresh(job)
+            if job.status == "cancelling":
+                cancelled = True
+        if chunks and not cancelled:
+            pending = {}
+            next_ci = 0
+            with ThreadPoolExecutor(max_workers=conc, thread_name_prefix="cls-chunk") as pool:
+                for _ in range(conc):
+                    pending[pool.submit(_call_chunk, next_ci)] = next_ci
+                    next_ci += 1
+                while pending and not cancelled:
+                    finished, _ = wait(list(pending), return_when=FIRST_COMPLETED)
+                    for fut in finished:
+                        ci = pending.pop(fut)
+                        data = fut.result()  # raises if the chunk failed after retries
+                        entries = {e.get("index"): e for e in (data.get("results") or []) if isinstance(e, dict)}
+                        chunk_ok = chunk_failed = 0
+                        for j, t in enumerate(chunks[ci]):
+                            done += 1
+                            e = entries.get(j)
+                            if e is None:
+                                failed += 1
+                                chunk_failed += 1
+                                continue
+                            good, val_json = validate_value(cls.field_type, e.get("value"))
+                            if not good:
+                                failed += 1
+                                chunk_failed += 1
+                                continue
+                            row = db.query(TrackClassification).filter_by(
+                                track_id=t.id, classifier_id=cls.id).first()
+                            if row is None:
+                                row = TrackClassification(track_id=t.id, classifier_id=cls.id)
+                                db.add(row)
+                            row.classifier_revision = cls.revision
+                            row.value = val_json
+                            row.reason = str(e.get("reason") or "")[:300]
+                            row.classified_at = datetime.utcnow()
+                            ok += 1
+                            chunk_ok += 1
+                        if job is not None:
+                            # apply progress in the SAME transaction as the rows,
+                            # so the job count and the data never disagree
+                            job.done = (job.done or 0) + chunk_ok
+                            job.failed = (job.failed or 0) + chunk_failed
+                        db.commit()  # per-chunk commit: partial work survives LLM failures
+                        # Cancellation is cooperative and checked at CHUNK
+                        # granularity: a concurrent cancel flips the DB status
+                        # from another session, so re-read it per chunk. A
+                        # cancel stops further refills immediately; in-flight
+                        # chunks finish their current call, results discarded.
+                        if job is not None:
+                            db.refresh(job)
+                            if job.status == "cancelling":
+                                cancelled = True
+                                break
+                        if next_ci < len(chunks):
+                            pending[pool.submit(_call_chunk, next_ci)] = next_ci
+                            next_ci += 1
         return {"requested": limit, "processed": len(tracks), "classified": ok,
                 "failed": failed, "done": done}
     finally:
