@@ -28,7 +28,7 @@ jobs:
           context: .
           target: backend
           push: true
-          tags: ghcr.io/${{ toLower(github.repository) }}-backend:latest
+          tags: ghcr.io/${{ toLowerCase(github.repository) }}-backend:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -47,6 +47,6 @@ jobs:
           context: .
           target: frontend
           push: true
-          tags: ghcr.io/${{ toLower(github.repository) }}-frontend:latest
+          tags: ghcr.io/${{ toLowerCase(github.repository) }}-frontend:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
