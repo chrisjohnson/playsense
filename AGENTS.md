@@ -27,6 +27,13 @@ Verify things by inspecting the container / host directly - never assume a path.
   (backend source is COPY-ed into the image at build time):
   docker build --target backend -t playsense:backend .
   Then recreate the api container and re-verify (see section 3).
+- CI (2026-09): `.github/workflows/docker.yml` (branch `main`, the default) publishes
+  both images to GHCR on push to main: `ghcr.io/chrisjohnson/playsense-backend:latest`
+  and `ghcr.io/chrisjohnson/playsense-frontend:latest` (GITHUB_TOKEN with
+  packages: write; GHA layer cache; manual run via Actions -> docker -> Run
+  workflow). Pushes from THIS environment need a one-off token URL because the
+  gh credential helper crashes here:
+  `git push "https://x-access-token:$(gh auth token)@github.com/chrisjohnson/playsense.git" main`.
 
 ## 2. Architecture (quick map)
 
