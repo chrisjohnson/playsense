@@ -50,9 +50,6 @@ export const api = {
   generatedCreate: (body: any) => req('/generated', { method: 'POST', body: JSON.stringify(body) }),
   generatedUpdate: (id: number, body: any) => req(`/generated/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   generatedDelete: (id: number) => req(`/generated/${id}`, { method: 'DELETE' }),
-  generatedSync: (id: number, dryRun: boolean) =>
-    req(`/generated/${id}/sync`, { method: 'POST', body: JSON.stringify({ dry_run: dryRun }) }),
-  generatedReread: (id: number) => req(`/generated/${id}/reread`, { method: 'POST' }),
   generate: (body: any) => req('/generate', { method: 'POST', body: JSON.stringify(body) }),
   saveCredentials: (client_id: string, client_secret: string) =>
     req('/spotify/credentials', { method: 'POST', body: JSON.stringify({ client_id, client_secret }) }),
