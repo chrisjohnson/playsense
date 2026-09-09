@@ -207,7 +207,7 @@ export default function App() {
         <div key={tab} className="dsh-page-enter">
           {tab === 'home' && <Home authUrl={authUrl} onAuthed={setAuthed} configured={configured} onRefresh={refreshAuth} authed={!!authed} display={display} oauthMsg={oauthMsg} />}
           {tab === 'search' && <Search authed={!!authed} />}
-          {tab === 'generate' && <Generate authed={!!authed} />}
+          {tab === 'generate' && <Generate />}
           {tab === 'ai' && <Classifiers />}
         </div>
       </Container>
