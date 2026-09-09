@@ -19,8 +19,6 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import { api } from '../api';
 import { PageHeader, EmptyState } from '../components';
 
-interface Props { authed: boolean; }
-
 type GeneratedItem = {
   id: number;
   name: string;
@@ -44,7 +42,7 @@ function playlistHue(id: number): string {
   return 'hsl(' + h + ' 52% 46%)';
 }
 
-export default function Generate({ authed }: Props) {
+export default function Generate() {
   const [items, setItems] = useState<GeneratedItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
