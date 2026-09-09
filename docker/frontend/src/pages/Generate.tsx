@@ -5,20 +5,13 @@ import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
 import Chip from '@mui/material/Chip';
-import Switch from '@mui/material/Switch';
-import FormControlLabel from '@mui/material/FormControlLabel';
 import TextField from '@mui/material/TextField';
 import MenuItem from '@mui/material/MenuItem';
-import Dialog from '@mui/material/Dialog';
-import DialogTitle from '@mui/material/DialogTitle';
-import DialogContent from '@mui/material/DialogContent';
-import DialogActions from '@mui/material/DialogActions';
 import Alert from '@mui/material/Alert';
 import CircularProgress from '@mui/material/CircularProgress';
 import Link from '@mui/material/Link';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
-import VisibilityIcon from '@mui/icons-material/Visibility';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import DownloadIcon from '@mui/icons-material/Download';
 import DeleteIcon from '@mui/icons-material/Delete';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
@@ -45,22 +38,6 @@ type GeneratedItem = {
   track_count: number | null;
 };
 
-type Diff = {
-  dry_run: boolean;
-  applied?: boolean;
-  will_create: boolean;
-  total_desired: number;
-  added: number;
-  removed: number;
-  added_tracks: { uri: string; name: string }[];
-  removed_tracks: { uri: string }[];
-  preview_mode: boolean;
-  spotify_playlist_id: string | null;
-  spotify_external_url: string;
-};
-
-const shortUri = (u: string) => (u.length > 44 ? '…' + u.slice(-30) : u);
-
 // deterministic pastel hue per generated playlist
 function playlistHue(id: number): string {
   const h = (Math.abs(id) * 47 + 120) % 360;
@@ -73,7 +50,7 @@ export default function Generate({ authed }: Props) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busyId, setBusyId] = useState<number | null>(null);
-  const [diffFor, setDiffFor] = useState<{ name: string; diff: Diff } | null>(null);
+  const [exportFormat, setExportFormat] = useState('csv');
 
   const load = useCallback(() => {
     api.generated()
@@ -84,39 +61,28 @@ export default function Generate({ authed }: Props) {
 
   useEffect(() => { load(); }, [load]);
 
-  const togglePreview = async (g: GeneratedItem, v: boolean) => {
+  const doExport = async (g: GeneratedItem, format: string) => {
     setBusyId(g.id);
-    try { await api.generatedUpdate(g.id, { preview_mode: v }); load(); }
-    catch (e: any) { setError(e?.message || String(e)); }
-    finally { setBusyId(null); }
-  };
-
-  const setSyncMode = async (g: GeneratedItem, mode: string) => {
-    setBusyId(g.id);
-    try { await api.generatedUpdate(g.id, { sync_mode: mode }); load(); }
-    catch (e: any) { setError(e?.message || String(e)); }
-    finally { setBusyId(null); }
-  };
-
-  const doSync = async (g: GeneratedItem, dry: boolean) => {
-    if (!authed) { setError('Connect to Spotify first.'); return; }
-    setBusyId(g.id); setError('');
     try {
-      const d: Diff = await api.generatedSync(g.id, dry);
-      setDiffFor({ name: g.name, diff: d });
-      setNotice(d.applied
-        ? 'Synced "' + g.name + '": +' + d.added + ' / -' + d.removed + '.'
-        : 'Previewed "' + g.name + '": +' + d.added + ' / -' + d.removed + ' (nothing written' + (d.preview_mode ? ' — preview mode is on' : '') + ').');
-      load();
-    } catch (e: any) { setError(e?.message || String(e)); }
-    finally { setBusyId(null); }
-  };
-
-  const doReread = async (g: GeneratedItem) => {
-    setBusyId(g.id); setError('');
-    try {
-      const r: any = await api.generatedReread(g.id);
-      setNotice('Re-read "' + g.name + '" from Spotify: ' + r.tracks_in_spotify + ' tracks now form the sync baseline.');
+      const res = await fetch(`/api/generated/${g.id}/export?format=${encodeURIComponent(format)}`);
+      if (!res.ok) {
+        setError(res.status + ': ' + (await res.text()));
+        return;
+      }
+      const disp = res.headers.get('content-disposition') || '';
+      const m = disp.match(/filename="([^"]+)"/);
+      const filename = m ? m[1] : (g.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '.' + format);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      const n = g.track_count ?? '?';
+      setNotice('Exported "' + g.name + '" — ' + n + ' tracks as ' + format + '.');
       load();
     } catch (e: any) { setError(e?.message || String(e)); }
     finally { setBusyId(null); }
@@ -153,10 +119,10 @@ export default function Generate({ authed }: Props) {
         intro={(
           <>
             A generated playlist is a saved search — fuzzy text, metadata and AI-classifier filters on one
-            of your playlists — kept in sync with a Spotify playlist. Dial in the subset on the Search tab,
-            then <b>Save as generated playlist</b>. With preview mode on (the default), syncing only shows
-            a diff of what would change; turn it off to actually write to Spotify.
-          </>
+            of your playlists — turned back into a list of tracks you can download and import into Spotify
+            through a third-party transfer such as <b>TuneMyMusic</b> or <b>Soundiiz</b>. Dial in the subset
+            on the Search tab, then <b>Save as generated playlist</b>. Use <b>Export</b> to download it
+            below (CSV, M3U8 or TXT).</>
         )}
         actions={<Button startIcon={<RefreshIcon />} onClick={load} size="small">Refresh</Button>}
       />
@@ -171,7 +137,7 @@ export default function Generate({ authed }: Props) {
           icon={<AutoAwesomeIcon sx={{ fontSize: 44 }} />}
           title="No generated playlists yet"
           hint={<>Dial in a subset on the Search tab (text, year, duration, AI classifications…),
-            then click <b>Save as generated playlist</b> to turn it into a synced Spotify playlist.</>}
+            then click <b>Save as generated playlist</b> to save it for later export.</>}
         />
       ) : (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
@@ -191,10 +157,7 @@ export default function Generate({ authed }: Props) {
                     <AutoAwesomeIcon sx={{ color: 'rgba(255,255,255,0.92)', fontSize: 19 }} />
                   </Box>
                   <Typography variant="h6" sx={{ fontWeight: 700 }}>{g.name}</Typography>
-                  {g.preview_mode ? <Chip size="small" variant="outlined" color="warning" label="preview mode" /> : <Chip size="small" color="success" label="live" />}
-                  <Chip size="small" variant="outlined" label={g.sync_mode === 'ongoing' ? 'auto-sync ~30min' : 'manual sync'} />
-                  {g.spotify_playlist_id ? null : <Chip size="small" variant="outlined" label="not synced yet" sx={{ opacity: 0.7 }} />}
-                  {g.track_count != null ? <Chip size="small" variant="outlined" label={g.track_count.toLocaleString() + ' tracks match now'} /> : null}
+                  {g.track_count != null ? <Chip size="small" variant="outlined" label={g.track_count.toLocaleString() + ' tracks match'} /> : null}
                   <Box sx={{ flexGrow: 1 }} />
                   {g.spotify_external_url ? (
                     <Link href={g.spotify_external_url} target="_blank" rel="noreferrer" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
@@ -206,35 +169,18 @@ export default function Generate({ authed }: Props) {
                 <Typography variant="caption" color="text.secondary">
                   on {g.source_playlist_name} — {specSummary(g.search_spec)}
                 </Typography>
-                <Typography variant="caption" color="text.secondary" display="block">
-                  {g.last_synced_at ? 'Last action: ' + new Date(g.last_synced_at).toLocaleString() : 'Never synced'}
-                  {g.last_sync_status ? ' — ' + g.last_sync_status : ''}
-                </Typography>
-
                 <Box sx={{ mt: 1.25, display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
-                  <FormControlLabel
-                    control={<Switch size="small" checked={g.preview_mode} disabled={busyId === g.id}
-                      onChange={(e) => togglePreview(g, e.target.checked)} />}
-                    label={<Typography variant="body2">Preview mode</Typography>}
-                  />
-                  <TextField size="small" select value={g.sync_mode} disabled={busyId === g.id}
-                    onChange={(e) => setSyncMode(g, e.target.value)} sx={{ width: 200 }}>
-                    <MenuItem value="once">Manual sync</MenuItem>
-                    <MenuItem value="ongoing">Ongoing (~30 min)</MenuItem>
+                  <TextField size="small" select value={exportFormat} disabled={busyId !== null}
+                    onChange={(e) => setExportFormat(e.target.value)} sx={{ width: 110 }}>
+                    <MenuItem value="csv">CSV</MenuItem>
+                    <MenuItem value="m3u8">M3U8</MenuItem>
+                    <MenuItem value="txt">TXT</MenuItem>
                   </TextField>
+                  <Button size="small" variant="contained" startIcon={<DownloadIcon />}
+                    disabled={busyId !== null} onClick={() => doExport(g, exportFormat)}>
+                    Export
+                  </Button>
                   <Box sx={{ flexGrow: 1 }} />
-                  <Button size="small" startIcon={<VisibilityIcon />} disabled={busyId === g.id} onClick={() => doSync(g, true)}>
-                    Preview changes
-                  </Button>
-                  <Button size="small" variant="contained" startIcon={<PlayArrowIcon />}
-                    disabled={busyId === g.id || g.preview_mode} onClick={() => doSync(g, false)}>
-                    Sync now
-                  </Button>
-                  {g.spotify_playlist_id ? (
-                    <Button size="small" startIcon={<RefreshIcon />} disabled={busyId === g.id} onClick={() => doReread(g)}>
-                      Re-read from Spotify
-                    </Button>
-                  ) : null}
                   <Button size="small" color="error" startIcon={<DeleteIcon />} disabled={busyId === g.id} onClick={() => doDelete(g)}>
                     Delete
                   </Button>
@@ -250,52 +196,6 @@ export default function Generate({ authed }: Props) {
           ))}
         </Box>
       )}
-
-      {diffFor ? (
-        <Dialog open onClose={() => setDiffFor(null)} fullWidth maxWidth="md">
-          <DialogTitle>
-            {diffFor.diff.applied ? 'Synced' : 'Preview'} — {diffFor.name}
-            {diffFor.diff.will_create ? ' (creates a new Spotify playlist)' : ''}
-          </DialogTitle>
-          <DialogContent>
-            <Box sx={{ mt: 1 }}>
-              <Typography variant="body2" sx={{ mb: 1.5 }}>
-                {diffFor.diff.applied ? 'Applied' : 'Would apply'}: +{diffFor.diff.added} added / -{diffFor.diff.removed} removed
-                {' · '}the search matches {diffFor.diff.total_desired} tracks.
-                {!diffFor.diff.applied && diffFor.diff.preview_mode ? ' Preview mode is on — nothing was written to Spotify.' : ''}
-              </Typography>
-              {diffFor.diff.added > 0 ? (
-                <Box sx={{ mb: 1.5, p: 1.25, borderRadius: 2, border: '1px solid rgba(30,215,96,0.28)', bgcolor: 'rgba(30,215,96,0.06)' }}>
-                  <Typography variant="subtitle2" color="success.main" sx={{ mb: 0.75 }}>+ Adding ({diffFor.diff.added})</Typography>
-                  {diffFor.diff.added_tracks.map((t) => (
-                    <Typography key={t.uri} variant="body2" noWrap>{t.name || shortUri(t.uri)}</Typography>
-                  ))}
-                  {diffFor.diff.added > diffFor.diff.added_tracks.length ? (
-                    <Typography variant="caption" color="text.secondary">…and {diffFor.diff.added - diffFor.diff.added_tracks.length} more</Typography>
-                  ) : null}
-                </Box>
-              ) : null}
-              {diffFor.diff.removed > 0 ? (
-                <Box sx={{ p: 1.25, borderRadius: 2, border: '1px solid rgba(241,94,108,0.28)', bgcolor: 'rgba(241,94,108,0.06)' }}>
-                  <Typography variant="subtitle2" color="error.main" sx={{ mb: 0.75 }}>- Removing ({diffFor.diff.removed})</Typography>
-                  {diffFor.diff.removed_tracks.map((t) => (
-                    <Typography key={t.uri} variant="body2" noWrap>{shortUri(t.uri)}</Typography>
-                  ))}
-                  {diffFor.diff.removed > diffFor.diff.removed_tracks.length ? (
-                    <Typography variant="caption" color="text.secondary">…and {diffFor.diff.removed - diffFor.diff.removed_tracks.length} more</Typography>
-                  ) : null}
-                </Box>
-              ) : null}
-              {diffFor.diff.added === 0 && diffFor.diff.removed === 0 ? (
-                <Typography variant="body2" color="text.secondary">Already in sync — nothing to change.</Typography>
-              ) : null}
-            </Box>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setDiffFor(null)}>Close</Button>
-          </DialogActions>
-        </Dialog>
-      ) : null}
     </Box>
   );
 }

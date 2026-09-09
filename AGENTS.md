@@ -218,25 +218,21 @@ full. Design around them, do not fight them:
   on a `GeneratedPlaylist` row. The server re-resolves that spec against the
   SOURCE playlist's tracks at sync time (same semantics as the client-side
   filter: Python port of Search.tsx's lev1/token-match fuzzy in generated.py).
-- Sync model (quota-friendly, see section 5): a sync NEVER reads the Spotify
-  playlist for its baseline. Baseline = `last_synced_uris` (what we last
-  WROTE). Diff = desired vs baseline, so a sync only costs WRITE calls
-  (chunked /playlists/{id}/tracks, 100 per call). First sync creates the
-  playlist (POST /users/{me}/playlists + one add call). If the user edits the
-  Spotify playlist by hand, `POST /generated/{id}/reread` does the full
-  paginated read once to re-baseline.
-- PREVIEW MODE is persisted on the row (default ON): sync endpoint computes
-  `effective_dry = dry_run OR preview_mode` - preview always wins, so a
-  preview-mode GP can never write, even for manual/ongoing syncs. The UI's
-  "Sync now" button is disabled while preview mode is on; "Preview changes"
-  always works.
-- ONGOING sync: the job manager daemon (`app/jobmanager.py` `_tick`) calls
-  `_maybe_sync_generated()` on a ~30min cadence (GENERATED_SYNC_INTERVAL_SECS,
-  module-level monotonic timestamp); it only touches GPs with
-  sync_mode=="ongoing" AND preview_mode==False, each in its own DB session
-  with isolated try/except so a Spotify failure can never break LLM job
-  stepping. (See section 5 for quota: a failing ongoing sync just records
-  last_sync_status and retries next tick.)
+- SYNC WAS REMOVED (2026-09): Spotify's Feb 2026 policy change makes ALL write
+  endpoints (playlist create/modify) return 403 for Development-Mode apps, and
+  this app is permanently in Development Mode, so sync can never work. The
+  POST /generated/{id}/sync and POST /generated/{id}/reread endpoints, the diff
+  computation, sync_generated_row(), _maybe_sync_generated(), and MAX_DIFF_LIST
+  were deleted; the job manager no longer auto-syncs.
+- EXPORT REPLACES SYNC: a generated playlist can be downloaded and imported into
+  Spotify via a third-party transfer (TuneMyMusic free=500 tracks, Soundiiz
+  free=200). GET /generated/{gid}/export?format=csv|m3u8|txt (csv default)
+  re-resolves the saved search (a PURE DB read - NO Spotify calls, never costs
+  quota) and returns a text file with a download Content-Disposition header. The
+  Generate tab has an Export control with a CSV/M3U8/TXT selector.
+- The last_synced_uris / spotify_playlist_id DB columns are now unused (left in
+  place; no migration). preview_mode / sync_mode columns remain on the row but
+  are no longer surfaced by the UI.
 - DEFAULT PLAYLIST: `playlists.is_default` (sqlite ALTER guard in db.py init);
   `POST /playlists/{id}/default` sets one and clears the rest. The Search
   page opens on it; the Home card has a Set-default button + chip.
@@ -248,8 +244,8 @@ full. Design around them, do not fight them:
 - Dev-mode caveat: playlist WRITE endpoints (create + add/remove tracks) can
   403 if the stored OAuth token predates the playlist-modify scopes. Reads
   still work. The fix is for the user to Reconnect (Home page) - a token
-  refresh does NOT widen scopes. Sync failures surface as 502 with the
-  Spotify status in detail, and the GP row is rolled back.
+  refresh does NOT widen scopes. Generated-playlist sync was removed (see
+  above); the /generate push_to_spotify path can also 403 the same way.
 
 ## 8. Frontend design system (2026-09 polish pass)
 
